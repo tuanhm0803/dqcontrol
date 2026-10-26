@@ -1,0 +1,244 @@
+{% extends "base.html" %}
+{% block title %}Quản trị phân quyền · {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-4 py-4">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div>
+      <h1 class="h4 fw-semibold mb-1">Quản trị phân quyền</h1>
+      <div class="text-body-secondary small">
+        Phân quyền nội bộ <strong>ghi đè</strong> quyền theo nhóm AD và có hiệu lực ngay ở thao tác tiếp theo của người dùng.
+      </div>
+    </div>
+    <button type="button" class="btn btn-dq" data-bs-toggle="modal" data-bs-target="#permModal">
+      <i class="bi bi-person-plus me-1"></i>Thêm phân quyền
+    </button>
+  </div>
+
+  <div class="row g-3 mb-4">
+    <!-- Quyền theo nhóm AD -->
+    <div class="col-xl-5">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <h2 class="h6 fw-semibold mb-3"><i class="bi bi-diagram-3 me-1"></i>Quyền mặc định theo nhóm AD</h2>
+          <table class="table table-sm small mb-2">
+            <thead><tr><th>Nhóm AD</th><th>Vai trò</th><th>Phạm vi / chức năng</th></tr></thead>
+            <tbody>
+              {% for group, label, desc in ad_groups %}
+              <tr><td><code>{{ group }}</code></td><td class="text-nowrap">{{ label }}</td><td>{{ desc }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          <div class="small text-body-secondary">
+            Thứ tự ưu tiên: Phân quyền nội bộ → {{ ad_groups[0][0] }} → {{ ad_groups[1][0] }} → {{ ad_groups[2][0] }}.
+            Không thuộc nhóm nào và không có phân quyền nội bộ → bị từ chối.
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- Ma trận quyền -->
+    <div class="col-xl-7">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <h2 class="h6 fw-semibold mb-3"><i class="bi bi-grid-3x3-gap me-1"></i>Ma trận chức năng</h2>
+          <table class="table table-sm small text-center mb-0">
+            <thead><tr><th class="text-start">Chức năng</th>{% for _, label in roles %}<th>{{ label }}</th>{% endfor %}</tr></thead>
+            <tbody>
+              {% for feature, allowed in [
+                ('Xem dashboard, xuất Excel/CSV', [1, 1, 1]),
+                ('Cập nhật trạng thái xử lý', [1, 0, 1]),
+                ('Gửi / hủy yêu cầu ngoại lệ', [1, 0, 1]),
+                ('Phê duyệt / từ chối ngoại lệ', [1, 1, 0]),
+                ('Thu hồi ngoại lệ đã duyệt', [1, 0, 0]),
+                ('Quản trị phân quyền, xem nhật ký', [1, 0, 0]),
+              ] %}
+              <tr><td class="text-start">{{ feature }}</td>
+                {% for a in allowed %}<td>{% if a %}<i class="bi bi-check-lg text-success"></i>{% else %}<span class="text-body-tertiary">—</span>{% endif %}</td>{% endfor %}
+              </tr>
+              {% endfor %}
+              <tr class="text-body-secondary"><td class="text-start">Phạm vi dữ liệu</td><td>Toàn hệ thống</td><td>Toàn hệ thống hoặc 1 chi nhánh</td><td>1 chi nhánh</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Danh sách phân quyền nội bộ -->
+  <div class="card border-0 shadow-sm mb-4">
+    <div class="card-header bg-body py-3 d-flex justify-content-between">
+      <span class="fw-semibold"><i class="bi bi-people me-1"></i>Phân quyền nội bộ</span>
+      <span class="small text-body-secondary">{{ perms | length }} tài khoản</span>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-hover table-dq mb-0">
+        <thead><tr>
+          <th>Tài khoản</th><th>Vai trò</th><th>Chi nhánh</th><th>Phạm vi</th><th>Trạng thái</th>
+          <th>Ghi chú</th><th>Cập nhật</th><th></th>
+        </tr></thead>
+        <tbody>
+          {% for p in perms %}
+          <tr class="{{ 'table-secondary' if not p.is_active }}">
+            <td><strong>{{ p.username }}</strong>{% if p.username == user.username %} <span class="badge text-bg-info">Bạn</span>{% endif %}
+              <div class="small text-body-secondary">{{ p.display_name or '' }}</div></td>
+            <td class="text-nowrap">{{ p.role_label }}</td>
+            <td>{{ p.branch_code or '—' }}</td>
+            <td class="text-nowrap">{% if p.all_branches %}<i class="bi bi-globe2"></i> Toàn hệ thống{% else %}<i class="bi bi-building"></i> Chi nhánh{% endif %}</td>
+            <td>{% if p.is_active %}<span class="badge text-bg-success">Hoạt động</span>{% else %}<span class="badge text-bg-danger">Đã khóa</span>{% endif %}</td>
+            <td class="small">{{ p.note or '' }}</td>
+            <td class="small text-nowrap">{{ p.updated_by }}<div class="text-body-secondary">{{ p.updated_at.strftime('%d/%m/%Y %H:%M') }}</div></td>
+            <td class="text-nowrap">
+              <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#permModal"
+                      data-username="{{ p.username }}" data-display_name="{{ p.display_name or '' }}" data-role="{{ p.role.value }}"
+                      data-branch_code="{{ p.branch_code or '' }}" data-all_branches="{{ 1 if p.all_branches else 0 }}"
+                      data-is_active="{{ 1 if p.is_active else 0 }}" data-note="{{ p.note or '' }}">
+                <i class="bi bi-pencil"></i> Sửa</button>
+              {% if p.username != user.username %}
+              <form method="post" action="/admin/permissions/{{ p.username }}/delete" class="d-inline"
+                    onsubmit="return confirm('Xóa phân quyền nội bộ của {{ p.username }}? Người dùng sẽ quay về quyền theo nhóm AD.')">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+                <button class="btn btn-sm btn-outline-danger" title="Xóa (quay về quyền theo AD)"><i class="bi bi-trash"></i></button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="8" class="text-center text-body-secondary py-4">
+            Chưa có phân quyền nội bộ - tất cả người dùng đang dùng quyền theo nhóm AD.
+          </td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Nhật ký hệ thống -->
+  <div class="card border-0 shadow-sm">
+    <div class="card-header bg-body py-3">
+      <form method="get" action="/admin/permissions" class="d-flex flex-wrap align-items-center gap-2">
+        <span class="fw-semibold me-auto"><i class="bi bi-journal-text me-1"></i>Nhật ký hệ thống
+          <span class="small text-body-secondary fw-normal">({{ '{:,}'.format(log_total) }})</span></span>
+        <select name="action" class="form-select form-select-sm w-auto" aria-label="Loại thao tác">
+          <option value="">Mọi thao tác</option>
+          {% for a in audit_actions %}<option value="{{ a }}" {{ 'selected' if f.action == a }}>{{ a }}</option>{% endfor %}
+        </select>
+        <input type="search" name="keyword" value="{{ f.keyword or '' }}" class="form-control form-control-sm w-auto"
+               placeholder="Người dùng, đối tượng..." aria-label="Từ khóa">
+        <button class="btn btn-sm btn-dq"><i class="bi bi-funnel"></i></button>
+      </form>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-sm table-dq mb-0">
+        <thead><tr><th>Thời gian</th><th>Người dùng</th><th>Thao tác</th><th>Đối tượng</th><th>Chi tiết</th></tr></thead>
+        <tbody>
+          {% for log in logs %}
+          <tr>
+            <td class="text-nowrap small">{{ log.at.strftime('%d/%m/%Y %H:%M:%S') }}</td>
+            <td>{{ log.username }}</td>
+            <td><span class="badge text-bg-light border">{{ log.action }}</span></td>
+            <td class="small">{{ log.target or '' }}</td>
+            <td class="small">{{ log.detail or '' }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="text-center text-body-secondary py-4">Chưa có nhật ký.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if pages > 1 %}
+    <div class="card-footer bg-body py-3">{% include "_pagination.html" %}</div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Modal thêm / sửa phân quyền -->
+<div class="modal fade" id="permModal" tabindex="-1" aria-labelledby="permModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <form class="modal-content" method="post" action="/admin/permissions">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+      <div class="modal-header">
+        <h2 class="modal-title h5" id="permModalLabel">Phân quyền người dùng</h2>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Đóng"></button>
+      </div>
+      <div class="modal-body row g-3">
+        <div class="col-6">
+          <label class="form-label fw-semibold" for="p_username">Tài khoản AD <span class="text-danger">*</span></label>
+          <input class="form-control" id="p_username" name="username" required maxlength="100" placeholder="vd: nguyenvana">
+        </div>
+        <div class="col-6">
+          <label class="form-label fw-semibold" for="p_display_name">Họ tên</label>
+          <input class="form-control" id="p_display_name" name="display_name" maxlength="200">
+        </div>
+        <div class="col-6">
+          <label class="form-label fw-semibold" for="p_role">Vai trò <span class="text-danger">*</span></label>
+          <select class="form-select" id="p_role" name="role" required>
+            {% for value, label in roles %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="col-6">
+          <label class="form-label fw-semibold" for="p_branch_code">Chi nhánh</label>
+          <select class="form-select" id="p_branch_code" name="branch_code">
+            <option value="">— Theo AD —</option>
+            {% for code, name in branches %}<option value="{{ code }}">{{ code }} - {{ name }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="col-12">
+          <div class="form-check form-switch">
+            <input class="form-check-input" type="checkbox" role="switch" id="p_all_branches" name="all_branches" value="1">
+            <label class="form-check-label" for="p_all_branches">Xem toàn hệ thống <span class="small text-body-secondary">(chỉ áp dụng cho Người phê duyệt)</span></label>
+          </div>
+          <div class="form-check form-switch">
+            <input class="form-check-input" type="checkbox" role="switch" id="p_is_active" name="is_active" value="1" checked>
+            <label class="form-check-label" for="p_is_active">Đang hoạt động <span class="small text-body-secondary">(tắt = khóa truy cập DQ Dashboard)</span></label>
+          </div>
+        </div>
+        <div class="col-12">
+          <label class="form-label fw-semibold" for="p_note">Ghi chú</label>
+          <input class="form-control" id="p_note" name="note" maxlength="500" placeholder="vd: Theo QĐ số ... ngày ...">
+        </div>
+        <div class="col-12 small text-body-secondary">
+          <i class="bi bi-info-circle"></i> Quản trị DQ luôn xem toàn hệ thống; User chi nhánh luôn chỉ xem chi nhánh của mình.
+          Nếu không chọn chi nhánh, hệ thống dùng chi nhánh từ thuộc tính AD.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Hủy</button>
+        <button type="submit" class="btn btn-dq"><i class="bi bi-save me-1"></i>Lưu</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+  const modal = document.getElementById("permModal");
+  const $ = (id) => document.getElementById(id);
+  const syncScope = () => {
+    const role = $("p_role").value;
+    const all = $("p_all_branches");
+    if (role === "admin") { all.checked = true; all.disabled = true; }
+    else if (role === "branch_user") { all.checked = false; all.disabled = true; }
+    else { all.disabled = false; }
+  };
+  $("p_role").addEventListener("change", syncScope);
+  modal.addEventListener("show.bs.modal", (e) => {
+    const d = e.relatedTarget?.dataset || {};
+    const editing = !!d.username;
+    $("permModalLabel").textContent = editing ? `Sửa phân quyền: ${d.username}` : "Thêm phân quyền";
+    $("p_username").value = d.username || "";
+    $("p_username").readOnly = editing;
+    $("p_display_name").value = d.display_name || "";
+    $("p_role").value = d.role || "branch_user";
+    $("p_branch_code").value = d.branch_code || "";
+    $("p_all_branches").checked = d.all_branches === "1";
+    $("p_is_active").checked = editing ? d.is_active === "1" : true;
+    $("p_note").value = d.note || "";
+    syncScope();
+  });
+  // Checkbox bị disabled không được gửi -> bật lại trước khi submit
+  modal.querySelector("form").addEventListener("submit", () => { $("p_all_branches").disabled = false; });
+})();
+</script>
+{% endblock %}

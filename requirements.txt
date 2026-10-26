@@ -1,0 +1,16 @@
+# Luu y: giu file nay chi chua ky tu ASCII (pip tren Windows doc bang cp1252)
+fastapi>=0.110
+uvicorn[standard]>=0.29
+jinja2>=3.1
+python-multipart>=0.0.9
+itsdangerous>=2.1          # bat buoc cho SessionMiddleware
+ldap3>=2.9
+sqlalchemy>=2.0
+pandas>=2.0
+openpyxl>=3.1
+python-dotenv>=1.0         # doc file .env
+
+# Driver CSDL - bo comment dong phu hop:
+# pyodbc>=5.0              # SQL Server (can cai "ODBC Driver 18 for SQL Server")
+# oracledb>=2.0            # Oracle (thin mode, khong can Oracle Client)
+# psycopg2-binary>=2.9     # PostgreSQL

@@ -1,0 +1,48 @@
+:root {
+  --dq-primary: #1f4e78;
+  --dq-primary-hover: #183d5e;
+}
+
+.bg-dq { background-color: var(--dq-primary) !important; }
+
+.btn-dq {
+  --bs-btn-color: #fff;
+  --bs-btn-bg: var(--dq-primary);
+  --bs-btn-border-color: var(--dq-primary);
+  --bs-btn-hover-color: #fff;
+  --bs-btn-hover-bg: var(--dq-primary-hover);
+  --bs-btn-hover-border-color: var(--dq-primary-hover);
+  --bs-btn-active-bg: var(--dq-primary-hover);
+}
+
+.login-icon {
+  width: 64px; height: 64px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.75rem; color: #fff; background: var(--dq-primary);
+}
+
+.kpi-card .kpi-icon {
+  width: 48px; height: 48px; border-radius: 12px;
+  display: flex; align-items: center; justify-content: center; font-size: 1.4rem;
+}
+.kpi-card .kpi-value { font-size: 1.75rem; font-weight: 600; line-height: 1.1; }
+
+.table-dq thead th {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--bs-light); white-space: nowrap; font-size: .85rem;
+}
+.table-dq td { font-size: .9rem; vertical-align: middle; }
+.table-dq .col-desc { min-width: 320px; }
+
+.export-group .btn { min-width: 130px; }
+
+/* Trạng thái "Ngoại lệ đã duyệt" */
+.badge-exception { background-color: #6f42c1 !important; color: #fff !important; }
+.bg-exception { background-color: #6f42c1 !important; }
+
+.bulk-bar {
+  position: sticky; top: 0; z-index: 3;
+  background: var(--bs-body-bg); border-bottom: 1px solid var(--bs-border-color);
+}
+.table-dq .col-check { width: 36px; }
+.text-pre-line { white-space: pre-line; }

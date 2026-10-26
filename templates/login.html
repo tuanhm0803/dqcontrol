@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Đăng nhập · {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="container py-5">
+  <div class="row justify-content-center">
+    <div class="col-sm-10 col-md-7 col-lg-5 col-xl-4">
+      <div class="card shadow-sm border-0">
+        <div class="card-body p-4 p-md-5">
+          <div class="text-center mb-4">
+            <div class="login-icon mx-auto mb-3"><i class="bi bi-shield-lock"></i></div>
+            <h1 class="h4 fw-semibold mb-1">Đăng nhập hệ thống</h1>
+            <p class="text-body-secondary small mb-0">Sử dụng tài khoản Active Directory (Windows)</p>
+          </div>
+
+          {% if error %}
+          <div class="alert alert-danger d-flex gap-2 align-items-start" role="alert">
+            <i class="bi bi-exclamation-triangle-fill"></i><div>{{ error }}</div>
+          </div>
+          {% endif %}
+
+          <form method="post" action="/login" autocomplete="on">
+            <input type="hidden" name="next" value="{{ next }}">
+            <div class="mb-3">
+              <label for="username" class="form-label">Tên đăng nhập</label>
+              <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-person"></i></span>
+                <input type="text" class="form-control" id="username" name="username"
+                       value="{{ username or '' }}" placeholder="vd: nguyenvana hoặc CORP\nguyenvana"
+                       required autofocus autocomplete="username">
+              </div>
+            </div>
+            <div class="mb-4">
+              <label for="password" class="form-label">Mật khẩu</label>
+              <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-key"></i></span>
+                <input type="password" class="form-control" id="password" name="password"
+                       required autocomplete="current-password">
+              </div>
+            </div>
+            <button type="submit" class="btn btn-dq w-100 py-2">
+              <i class="bi bi-box-arrow-in-right me-1"></i>Đăng nhập
+            </button>
+          </form>
+        </div>
+      </div>
+
+      {% if mock_ldap %}
+      <div class="card border-warning-subtle mt-3">
+        <div class="card-body small">
+          <div class="fw-semibold mb-2"><i class="bi bi-info-circle me-1"></i>Chế độ AD giả lập (MOCK_LDAP) - tài khoản thử:</div>
+          <table class="table table-sm mb-0">
+            <tr><td><code>admin</code> / <code>Admin@123</code></td><td>DQ_ADMIN · toàn hệ thống</td></tr>
+            <tr><td><code>approver</code> / <code>Approver@123</code></td><td>DQ_APPROVER · phê duyệt ngoại lệ</td></tr>
+            <tr><td><code>hn.user</code> / <code>User@123</code></td><td>DQ_USER · HN001</td></tr>
+            <tr><td><code>hcm.user</code> / <code>User@123</code></td><td>DQ_USER · HCM01</td></tr>
+            <tr><td><code>guest</code> / <code>Guest@123</code></td><td>Không có quyền</td></tr>
+          </table>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

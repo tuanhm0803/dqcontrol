@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{{ app_name }}{% endblock %}</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="{{ url_for('static', path='css/app.css') }}">
+</head>
+<body class="d-flex flex-column min-vh-100 bg-body-tertiary">
+{% set path = request.url.path %}
+
+<nav class="navbar navbar-expand-lg navbar-dark bg-dq shadow-sm">
+  <div class="container-fluid px-4">
+    <a class="navbar-brand fw-semibold" href="/dashboard">
+      <i class="bi bi-clipboard-data me-1"></i>{{ app_name }}
+    </a>
+    {% if user %}
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#mainNav"
+            aria-controls="mainNav" aria-expanded="false" aria-label="Mở menu">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="mainNav">
+      <ul class="navbar-nav me-auto">
+        <li class="nav-item">
+          <a class="nav-link {{ 'active' if path.startswith('/dashboard') }}" href="/dashboard">
+            <i class="bi bi-speedometer2 me-1"></i>Dashboard</a>
+        </li>
+        <li class="nav-item">
+          {% set n_pending = pending_exceptions(user) %}
+          <a class="nav-link {{ 'active' if path.startswith('/exceptions') }}" href="/exceptions">
+            <i class="bi bi-patch-check me-1"></i>Ngoại lệ
+            {% if n_pending %}<span class="badge rounded-pill text-bg-warning ms-1" title="Yêu cầu chờ bạn phê duyệt">{{ n_pending }}</span>{% endif %}
+          </a>
+        </li>
+        {% if user.is_admin %}
+        <li class="nav-item">
+          <a class="nav-link {{ 'active' if path.startswith('/admin') }}" href="/admin/permissions">
+            <i class="bi bi-people-fill me-1"></i>Quản trị phân quyền</a>
+        </li>
+        {% endif %}
+      </ul>
+
+      <!-- Thông tin User AD / Role / Chi nhánh -->
+      <div class="d-flex flex-wrap align-items-center gap-2 gap-lg-3 text-white py-2 py-lg-0">
+        <div class="text-lg-end lh-sm">
+          <div class="fw-semibold"><i class="bi bi-person-circle me-1"></i>{{ user.display_name }}</div>
+          <small class="opacity-75">{{ user.username }}{% if user.email %} · {{ user.email }}{% endif %}</small>
+        </div>
+        <span class="badge rounded-pill {{ 'text-bg-warning' if user.is_admin else 'text-bg-light' }}"
+              title="Nguồn phân quyền: {{ user.permission_source }} · Nhóm AD: {{ user.groups | join(', ') }}">
+          <i class="bi {{ 'bi-shield-lock' if user.is_admin else ('bi-patch-check' if user.can_approve else 'bi-person-badge') }} me-1"></i>{{ user.role_label }}
+        </span>
+        <span class="badge rounded-pill text-bg-light" title="Mã chi nhánh{{ ' · xem toàn hệ thống' if user.all_branches }}">
+          <i class="bi bi-building me-1"></i>{{ user.branch_code or 'N/A' }}{% if user.all_branches %} <i class="bi bi-globe2"></i>{% endif %}
+        </span>
+        <form method="post" action="/logout" class="m-0">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+          <button type="submit" class="btn btn-sm btn-outline-light">
+            <i class="bi bi-box-arrow-right me-1"></i>Đăng xuất
+          </button>
+        </form>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</nav>
+
+{% set flashes = pop_flashes(request) %}
+{% if flashes %}
+<div class="container-fluid px-4 pt-3">
+  {% for f in flashes %}
+  <div class="alert alert-{{ f.category }} alert-dismissible fade show mb-2" role="alert">
+    {{ f.message }}
+    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Đóng"></button>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<main class="flex-grow-1">
+  {% block content %}{% endblock %}
+</main>
+
+<footer class="border-top bg-body py-2 small text-body-secondary">
+  <div class="container-fluid px-4 d-flex justify-content-between flex-wrap gap-2">
+    <span>{{ app_name }} · Hệ thống nội bộ</span>
+    <span>
+      {% if data_source() == 'mock' %}
+        <span class="badge text-bg-warning">Dữ liệu giả lập</span>
+      {% else %}
+        <span class="badge text-bg-success">CSDL thật</span>
+      {% endif %}
+      {% if mock_ldap %}<span class="badge text-bg-warning">AD giả lập</span>{% endif %}
+    </span>
+  </div>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+// Chọn nhiều dòng: checkbox .row-check[data-group], ô "chọn tất cả" .check-all[data-group],
+// nút .needs-selection[data-group] chỉ bật khi đã chọn, .selection-count[data-group] hiện số dòng.
+document.addEventListener("DOMContentLoaded", () => {
+  const refresh = (group) => {
+    const checks = [...document.querySelectorAll(`.row-check[data-group="${group}"]`)];
+    const n = checks.filter(c => c.checked).length;
+    document.querySelectorAll(`.needs-selection[data-group="${group}"]`).forEach(b => b.disabled = n === 0);
+    document.querySelectorAll(`.selection-count[data-group="${group}"]`).forEach(s => s.textContent = n);
+    const all = document.querySelector(`.check-all[data-group="${group}"]`);
+    if (all) { all.checked = n > 0 && n === checks.length; all.indeterminate = n > 0 && n < checks.length; }
+  };
+  const groups = new Set([...document.querySelectorAll("[data-group]")].map(e => e.dataset.group));
+  groups.forEach(group => {
+    document.querySelectorAll(`.row-check[data-group="${group}"]`).forEach(c => c.addEventListener("change", () => refresh(group)));
+    const all = document.querySelector(`.check-all[data-group="${group}"]`);
+    if (all) all.addEventListener("change", () => {
+      document.querySelectorAll(`.row-check[data-group="${group}"]`).forEach(c => c.checked = all.checked);
+      refresh(group);
+    });
+    refresh(group);
+  });
+});
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>
