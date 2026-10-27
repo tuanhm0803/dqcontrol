@@ -40,12 +40,27 @@
 ## Cài đặt & chạy
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\activate          # Linux: source .venv/bin/activate
-pip install -r requirements.txt
+# Cài thẳng vào Python 3.13 của máy (không dùng venv). Linux: dùng python3.13 thay cho py -3.13
+py -3.13 -m pip install -r requirements.txt
 copy .env.example .env            # chỉnh sửa cấu hình
 
-uvicorn main:app --host 0.0.0.0 --port 8080
+py -3.13 -m uvicorn main:app --host 0.0.0.0 --port 8080
+```
+
+### Cài offline (máy không có Internet)
+
+Trên máy có mạng, tải sẵn toàn bộ thư viện (Windows 64-bit, Python 3.13) vào thư mục `wheels/`:
+
+```powershell
+py -3.13 -m pip download -r requirements.txt -d wheels --only-binary=:all:
+py -3.13 -m pip download pyodbc oracledb psycopg2-binary -d wheels\drivers --only-binary=:all:   # driver CSDL (tùy chọn)
+```
+
+Copy cả thư mục project (gồm `wheels/`) sang máy đích, cài Python 3.13 64-bit, rồi chạy:
+
+```powershell
+py -3.13 -m pip install --no-index --find-links wheels -r requirements.txt
+py -3.13 -m pip install --no-index --find-links wheels\drivers pyodbc      # hoặc oracledb / psycopg2-binary
 ```
 
 Máy khác trong LAN truy cập: `http://<IP-máy-chủ>:8080` (xem IP bằng `ipconfig`).
@@ -55,7 +70,7 @@ Trên Windows cần mở firewall (PowerShell quyền Admin):
 New-NetFirewallRule -DisplayName "DQ Dashboard 8080" -Direction Inbound -Protocol TCP -LocalPort 8080 -Action Allow -Profile Domain,Private
 ```
 
-Chạy nhiều tiến trình cho nhiều người dùng đồng thời: `uvicorn main:app --host 0.0.0.0 --port 8080 --workers 4`
+Chạy nhiều tiến trình cho nhiều người dùng đồng thời: `py -3.13 -m uvicorn main:app --host 0.0.0.0 --port 8080 --workers 4`
 (bắt buộc đặt `SECRET_KEY` cố định, nếu không mỗi worker có khóa khác nhau và session sẽ không hợp lệ).
 
 ## Chế độ dev / offline
@@ -63,7 +78,7 @@ Chạy nhiều tiến trình cho nhiều người dùng đồng thời: `uvicorn
 Mặc định `MOCK_LDAP=true` và `USE_MOCK_DATA=true`, nên chạy được ngay mà không cần AD hay CSDL.
 Ở chế độ này dữ liệu giả lập được nạp vào file SQLite `dq_mock.db` trong lần chạy đầu.
 Các thay đổi (trạng thái, ngoại lệ, phân quyền) được giữ lại giữa các lần khởi động.
-Muốn làm mới dữ liệu: `python database.py reset-mock`.
+Muốn làm mới dữ liệu: `py -3.13 database.py reset-mock`.
 
 | Tài khoản  | Mật khẩu       | Nhóm AD     | Vai trò                                     |
 |------------|----------------|-------------|---------------------------------------------|
@@ -126,7 +141,7 @@ Admin không thể tự hạ quyền, tự khóa hay tự xóa phân quyền c�
 
 ## Kết nối CSDL thật
 
-1. Bỏ comment driver tương ứng trong `requirements.txt` và `pip install` lại.
+1. Bỏ comment driver tương ứng trong `requirements.txt` và chạy lại `py -3.13 -m pip install -r requirements.txt`.
 2. Trong `.env`: `USE_MOCK_DATA=false`, `DATABASE_URL=...`, `DQ_TABLE_NAME`, `DQ_TABLE_SCHEMA`, `APP_TABLE_SCHEMA`.
 3. Nếu bảng thật có tên cột khác, sửa tham số đầu của `mapped_column(...)` trong `models.py`.
 4. **Bảng lỗi DQ cần thêm 2 cột** để lưu ngày và người xử lý / phê duyệt. Tài khoản kết nối cần quyền `UPDATE`
@@ -144,7 +159,7 @@ Admin không thể tự hạ quyền, tự khóa hay tự xóa phân quyền c�
    Khi khởi động, ứng dụng kiểm tra các cột này và báo lỗi rõ ràng nếu còn thiếu.
 5. Ba bảng của ứng dụng (`dq_exception_requests`, `dq_user_permissions`, `dq_audit_log`) được **tự tạo** khi khởi động.
    Tài khoản cần quyền `CREATE TABLE`, hoặc DBA tạo trước.
-6. Muốn thử nhanh với CSDL trống: `python database.py init-db --seed`. Lệnh này tạo toàn bộ bảng và nạp dữ liệu mẫu.
+6. Muốn thử nhanh với CSDL trống: `py -3.13 database.py init-db --seed`. Lệnh này tạo toàn bộ bảng và nạp dữ liệu mẫu.
 
 Nếu không kết nối được CSDL hoặc bảng thiếu cột mà `DB_FALLBACK_TO_MOCK=true`, ứng dụng ghi log lỗi và chuyển sang dữ liệu giả lập
 (footer hiển thị badge "Dữ liệu giả lập"). Ở môi trường thật nên đặt `false` để lỗi hiện rõ ngay khi khởi động.

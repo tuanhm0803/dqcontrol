@@ -27,21 +27,22 @@ Tên biến, hàm và bảng bằng tiếng Anh. Giữ nguyên quy ước này k
 
 | Mục | Giá trị |
 |---|---|
-| Python | **3.13.5** (venv tại `.venv/`, tạo bằng `C:\Users\PC\AppData\Local\Programs\Python\Python313\python.exe`) |
+| Python | **3.13.5** cài trên máy (`C:\Users\PC\AppData\Local\Programs\Python\Python313\python.exe`), **không dùng venv**; gọi qua launcher `py -3.13` |
 | Thư viện chính (đã test) | fastapi 0.162, starlette 1.10, SQLAlchemy 2.1.6, pydantic 2.14, pandas 3.1, openpyxl 3.1.5, ldap3 2.9.1, Jinja2 3.1.6, uvicorn 0.54 |
 | OS dev | Windows 11; shell PowerShell 5.1 |
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\uvicorn.exe main:app --host 0.0.0.0 --port 8080   # chạy (LAN)
-.\.venv\Scripts\python.exe database.py reset-mock                   # làm mới dữ liệu giả lập
-.\.venv\Scripts\python.exe database.py init-db --seed               # tạo bảng + seed trên DATABASE_URL
+py -3.13 -m pip install -r requirements.txt                 # cài thư viện vào Python 3.13 của máy
+py -3.13 -m uvicorn main:app --host 0.0.0.0 --port 8080     # chạy (LAN)
+py -3.13 database.py reset-mock                             # làm mới dữ liệu giả lập
+py -3.13 database.py init-db --seed                         # tạo bảng + seed trên DATABASE_URL
 ```
 
+- Cài offline cho máy không có Internet: thư mục `wheels/` (bị `.gitignore`) chứa wheel cho win_amd64 / cp313, `wheels/drivers/` chứa pyodbc, oracledb, psycopg2-binary. Lệnh tạo và cài: xem README mục *Cài offline*.
 - **Chưa có thư mục test trong repo.** Các lần trước kiểm thử bằng một script end-to-end dùng `fastapi.testclient.TestClient`.
   Script đó đặt `MOCK_DATABASE_URL` trỏ tới file SQLite tạm, đăng nhập từng vai trò, lấy CSRF token bằng regex
   `name="csrf_token" value="..."` từ HTML, và đọc flash message từ HTML sau redirect. Nên tái tạo nó thành `tests/` (pytest) khi cần.
-- Nếu `uvicorn` đang chạy từ `.venv`, Windows **khóa file `.pyd`**, nên không xóa hay dựng lại venv được. Phải dừng tiến trình trước.
+- Khi `uvicorn` đang chạy, Windows **khóa file `.pyd`** trong `site-packages` của Python 3.13, nên `pip install --upgrade` có thể lỗi. Phải dừng tiến trình trước.
 
 ## 3. Cấu trúc module & hướng import
 
@@ -372,7 +373,7 @@ Trong dữ liệu seed, các yêu cầu ngoại lệ do `hn.user`, `hcm.user` ho
 - Flash message được HTML-escape khi render, nên ký tự `'` thành `&#39;`. Test so sánh chuỗi cần lưu ý điều này.
 - Đổi quyền, khóa hoặc xóa phân quyền có hiệu lực ngay vì `resolve_user` chạy mỗi request. Đổi lại, mỗi request tốn thêm một truy vấn `db.get(UserPermission)`.
 - `pending_exceptions()` trong menu mở thêm một DB session cho mỗi trang render. Chấp nhận được ở quy mô LAN.
-- Trên máy dev, PATH hệ thống (Machine) vẫn trỏ Python 3.12, nên lệnh `python` có thể chưa phải 3.13. Luôn gọi `.\.venv\Scripts\python.exe`.
+- Trên máy dev, PATH hệ thống (Machine) vẫn trỏ Python 3.12, nên lệnh `python` / `uvicorn` có thể chưa phải 3.13. Luôn gọi `py -3.13` (và `py -3.13 -m uvicorn`).
 
 ## 14. Giới hạn hiện tại / hướng mở rộng
 
