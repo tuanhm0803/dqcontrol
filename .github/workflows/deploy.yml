@@ -69,6 +69,10 @@ jobs:
           REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          # Secret copy trên Windows có thể dính khoảng trắng / \r -> làm sạch
+          HOST=$(printf '%s' "$HOST" | tr -d '[:space:]')
+          USER=$(printf '%s' "$USER" | tr -d '[:space:]')
+          PORT=$(printf '%s' "$PORT" | tr -d '[:space:]')
           missing=0
           for pair in HOST:VPS_HOST USER:VPS_USERNAME SSH_KEY:VPS_SSH_KEY SECRET_KEY:SECRET_KEY; do
             var="${pair%%:*}" secret="${pair#*:}"
@@ -80,18 +84,28 @@ jobs:
           [ "$missing" -eq 0 ] || exit 1
 
           mkdir -p ~/.ssh
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
+          printf '%s\n' "$SSH_KEY" | tr -d '\r' > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
+          if ! ssh-keygen -y -P "" -f ~/.ssh/id_deploy > ~/.ssh/id_deploy.pub 2>/dev/null; then
+            echo "::error::VPS_SSH_KEY không đọc được: phải là nội dung file private key (có dòng BEGIN/END OPENSSH PRIVATE KEY), không có passphrase"
+            exit 1
+          fi
+          echo "Đăng nhập $USER@$HOST:$PORT bằng key $(ssh-keygen -lf ~/.ssh/id_deploy.pub | awk '{print $2}')"
           if [ -n "$KNOWN_HOSTS" ]; then
             printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
           else
             ssh-keyscan -p "$PORT" "$HOST" > ~/.ssh/known_hosts 2>/dev/null
           fi
 
-          remote() { ssh -i ~/.ssh/id_deploy -p "$PORT" "$USER@$HOST" "$@"; }
+          SSH_OPTS=(-i ~/.ssh/id_deploy -o IdentitiesOnly=yes -o BatchMode=yes)
+          remote() { ssh "${SSH_OPTS[@]}" -p "$PORT" "$USER@$HOST" "$@"; }
 
+          if ! remote true; then
+            echo "::error::SSH bị từ chối: kiểm tra VPS_USERNAME (user có public key trên trong ~/.ssh/authorized_keys) và VPS_SSH_KEY"
+            exit 1
+          fi
           remote "mkdir -p '$DEPLOY_PATH'"
-          scp -i ~/.ssh/id_deploy -P "$PORT" deploy/docker-compose.yml "$USER@$HOST:$DEPLOY_PATH/"
+          scp "${SSH_OPTS[@]}" -P "$PORT" deploy/docker-compose.yml "$USER@$HOST:$DEPLOY_PATH/"
 
           # Bản demo: tài khoản + dữ liệu giả lập. Ghi đè/thêm biến qua secret APP_ENV_EXTRA (mỗi dòng KEY=VALUE).
           {
