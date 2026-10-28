@@ -69,9 +69,15 @@ jobs:
           REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          for v in HOST USER SSH_KEY SECRET_KEY; do
-            if [ -z "${!v}" ]; then echo "::error::Thiếu secret cho $v"; exit 1; fi
+          missing=0
+          for pair in HOST:VPS_HOST USER:VPS_USERNAME SSH_KEY:VPS_SSH_KEY SECRET_KEY:SECRET_KEY; do
+            var="${pair%%:*}" secret="${pair#*:}"
+            if [ -z "${!var}" ]; then
+              echo "::error::Thiếu repository secret $secret (Settings > Secrets and variables > Actions > tab Secrets)"
+              missing=1
+            fi
           done
+          [ "$missing" -eq 0 ] || exit 1
 
           mkdir -p ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
