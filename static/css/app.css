@@ -15,6 +15,16 @@
   --bs-btn-active-bg: var(--dq-primary-hover);
 }
 
+.btn-outline-dq {
+  --bs-btn-color: var(--dq-primary);
+  --bs-btn-border-color: var(--dq-primary);
+  --bs-btn-hover-color: #fff;
+  --bs-btn-hover-bg: var(--dq-primary);
+  --bs-btn-hover-border-color: var(--dq-primary);
+  --bs-btn-active-color: #fff;
+  --bs-btn-active-bg: var(--dq-primary-hover);
+}
+
 .login-icon {
   width: 64px; height: 64px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
@@ -35,10 +45,6 @@
 .table-dq .col-desc { min-width: 320px; }
 
 .export-group .btn { min-width: 130px; }
-
-/* Trạng thái "Ngoại lệ đã duyệt" */
-.badge-exception { background-color: #6f42c1 !important; color: #fff !important; }
-.bg-exception { background-color: #6f42c1 !important; }
 
 .bulk-bar {
   position: sticky; top: 0; z-index: 3;

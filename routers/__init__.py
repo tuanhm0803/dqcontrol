@@ -8,7 +8,7 @@ from fastapi.templating import Jinja2Templates
 from auth import csrf_token
 from config import BASE_DIR, settings
 from database import SessionLocal, data_source
-from models import ROLE_LABELS, CurrentUser, ExceptionStatus, Role, Severity, Status
+from models import PENDING_STATUSES, ROLE_LABELS, CurrentUser, ExclusionStatus, Role, Severity, Status
 from workflow import count_pending_for
 
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
@@ -22,15 +22,15 @@ STATUS_BADGE = {
     Status.PENDING.value: "text-bg-secondary",
     Status.IN_PROGRESS.value: "text-bg-primary",
     Status.DONE.value: "text-bg-success",
-    Status.EXCEPTION_PENDING.value: "text-bg-warning",
-    Status.EXCEPTION_APPROVED.value: "badge-exception",
 }
-EXCEPTION_BADGE = {
-    ExceptionStatus.PENDING.value: "text-bg-warning",
-    ExceptionStatus.APPROVED.value: "text-bg-success",
-    ExceptionStatus.REJECTED.value: "text-bg-danger",
-    ExceptionStatus.CANCELLED.value: "text-bg-secondary",
-    ExceptionStatus.REVOKED.value: "text-bg-dark",
+EXCLUSION_BADGE = {
+    ExclusionStatus.PENDING_MANAGER.value: "text-bg-warning",
+    ExclusionStatus.PENDING_BUSINESS.value: "text-bg-info",
+    ExclusionStatus.PENDING_DQ.value: "text-bg-primary",
+    ExclusionStatus.APPROVED.value: "text-bg-success",
+    ExclusionStatus.REJECTED.value: "text-bg-danger",
+    ExclusionStatus.CANCELLED.value: "text-bg-secondary",
+    ExclusionStatus.REVOKED.value: "text-bg-dark",
 }
 
 
@@ -42,16 +42,16 @@ def pop_flashes(request: Request) -> list[dict]:
     return request.session.pop("flash", [])
 
 
-def flash_result(request: Request, verb: str, done: int, skipped: list[str]) -> None:
-    """Thông báo kết quả thao tác hàng loạt."""
+def flash_result(request: Request, verb: str, done: int, skipped: list[str], limit: int = 5) -> None:
+    """Thông báo kết quả thao tác hàng loạt (liệt kê tối đa `limit` dòng bị bỏ qua)."""
     if done:
         flash(request, f"Đã {verb} {done} dòng.", "success")
     if skipped:
-        more = f" (và {len(skipped) - 5} dòng khác)" if len(skipped) > 5 else ""
-        flash(request, f"Bỏ qua {len(skipped)} dòng: " + "; ".join(skipped[:5]) + more, "warning")
+        more = f" (và {len(skipped) - limit} dòng khác)" if len(skipped) > limit else ""
+        flash(request, f"Bỏ qua {len(skipped)} dòng: " + "; ".join(skipped[:limit]) + more, "warning")
 
 
-def safe_next(url: str | None, default: str = "/dashboard") -> str:
+def safe_next(url: str | None, default: str = "/") -> str:
     """Chỉ cho phép chuyển hướng nội bộ (chống open redirect)."""
     if url and url.startswith("/") and not url.startswith("//") and "\\" not in url:
         return url
@@ -62,7 +62,7 @@ def redirect(url: str) -> RedirectResponse:
     return RedirectResponse(url, status_code=303)
 
 
-def pending_exceptions(user: CurrentUser | None) -> int:
+def pending_exclusions(user: CurrentUser | None) -> int:
     if not user or not user.can_approve:
         return 0
     with SessionLocal() as db:
@@ -78,15 +78,16 @@ templates.env.globals.update(
     mock_ldap=settings.MOCK_LDAP,
     severities=[s.value for s in Severity],
     statuses=[s.value for s in Status],
-    exception_statuses=[s.value for s in ExceptionStatus],
+    exclusion_statuses=[s.value for s in ExclusionStatus],
+    pending_statuses=list(PENDING_STATUSES),
     roles=[(r.value, ROLE_LABELS[r]) for r in Role],
     severity_badge=lambda v: SEVERITY_BADGE.get(v, "text-bg-light"),
     status_badge=lambda v: STATUS_BADGE.get(v, "text-bg-light"),
-    exception_badge=lambda v: EXCEPTION_BADGE.get(v, "text-bg-light"),
+    exclusion_badge=lambda v: EXCLUSION_BADGE.get(v, "text-bg-light"),
     data_source=data_source,
     csrf_token=csrf_token,
     pop_flashes=pop_flashes,
-    pending_exceptions=pending_exceptions,
+    pending_exclusions=pending_exclusions,
     page_url=page_url,
-    reason_min_length=settings.EXCEPTION_REASON_MIN_LENGTH,
+    reason_min_length=settings.EXCLUSION_REASON_MIN_LENGTH,
 )

@@ -1,4 +1,4 @@
-"""Dashboard DQ: hiển thị, tìm kiếm, lọc, cập nhật trạng thái xử lý."""
+"""Dashboard DQ (admin / người phê duyệt): hiển thị, tìm kiếm, lọc; admin cập nhật trạng thái xử lý."""
 import math
 from datetime import date
 from urllib.parse import urlencode
@@ -6,10 +6,10 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, Form, Query, Request
 from sqlalchemy.orm import Session
 
-from auth import get_current_user, verify_csrf
+from auth import get_current_user, require_error_viewer, verify_csrf
 from config import settings
 from database import get_db
-from models import CurrentUser, DQFilter, PagedResult, Severity, Status
+from models import MANUAL_STATUSES, CurrentUser, DQFilter, PagedResult, Severity, Status
 from repository import error_stats, list_branches, search_errors
 from routers import flash, flash_result, redirect, safe_next, templates
 from workflow import WorkflowError, update_status
@@ -58,15 +58,15 @@ def scoped_branches(db: Session, user: CurrentUser) -> list[tuple[str, str]]:
 
 
 @router.get("/")
-def index():
-    return redirect("/dashboard")
+def index(user: CurrentUser = Depends(get_current_user)):
+    return redirect("/dashboard" if user.can_view_errors else "/exclusions")
 
 
 @router.get("/dashboard")
 def dashboard(
     request: Request,
     page: int = Query(1, ge=1),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(require_error_viewer),
     filters: DQFilter = Depends(get_filters),
     db: Session = Depends(get_db),
 ):
@@ -94,7 +94,7 @@ def dashboard(
         "qs": urlencode(params),
         "qs_no_branch": urlencode({k: v for k, v in params.items() if k != "branch_code"}),
         "current_url": request.url.path + (f"?{request.url.query}" if request.url.query else ""),
-        "manual_statuses": [Status.PENDING.value, Status.IN_PROGRESS.value, Status.DONE.value],
+        "manual_statuses": [s.value for s in MANUAL_STATUSES],
     })
 
 
@@ -104,7 +104,7 @@ def change_status(
     ids: list[int] = Form([]),
     new_status: str = Form(""),
     next: str = Form("/dashboard"),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(require_error_viewer),
     db: Session = Depends(get_db),
 ):
     try:
@@ -121,7 +121,7 @@ def change_status(
 def api_dq_errors(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=500),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(require_error_viewer),
     filters: DQFilter = Depends(get_filters),
     db: Session = Depends(get_db),
 ):

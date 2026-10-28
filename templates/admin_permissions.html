@@ -30,7 +30,7 @@
             </tbody>
           </table>
           <div class="small text-body-secondary">
-            Thứ tự ưu tiên: Phân quyền nội bộ → {{ ad_groups[0][0] }} → {{ ad_groups[1][0] }} → {{ ad_groups[2][0] }}.
+            Thứ tự ưu tiên: Phân quyền nội bộ{% for g in ad_groups %} → {{ g[0] }}{% endfor %}.
             Không thuộc nhóm nào và không có phân quyền nội bộ → bị từ chối.
           </div>
         </div>
@@ -44,21 +44,30 @@
           <table class="table table-sm small text-center mb-0">
             <thead><tr><th class="text-start">Chức năng</th>{% for _, label in roles %}<th>{{ label }}</th>{% endfor %}</tr></thead>
             <tbody>
+              {# Thứ tự cột = thứ tự khai báo Role: admin, approver (QTDL), business_approver, branch_manager, branch_user #}
               {% for feature, allowed in [
-                ('Xem dashboard, xuất Excel/CSV', [1, 1, 1]),
-                ('Cập nhật trạng thái xử lý', [1, 0, 1]),
-                ('Gửi / hủy yêu cầu ngoại lệ', [1, 0, 1]),
-                ('Phê duyệt / từ chối ngoại lệ', [1, 1, 0]),
-                ('Thu hồi ngoại lệ đã duyệt', [1, 0, 0]),
-                ('Quản trị phân quyền, xem nhật ký', [1, 0, 0]),
+                ('Xem dashboard lỗi DQ, xuất Excel/CSV lỗi', [1, 1, 1, 0, 0]),
+                ('Cập nhật trạng thái xử lý lỗi', [1, 0, 0, 0, 0]),
+                ('Khai báo / upload / hủy yêu cầu loại trừ', [1, 0, 0, 0, 1]),
+                ('Duyệt / từ chối cấp 1 - LĐ phòng ban (chi nhánh)', [1, 0, 0, 1, 0]),
+                ('Duyệt / từ chối cấp 2 - Nghiệp vụ', [1, 0, 1, 0, 0]),
+                ('Duyệt / từ chối cấp 3 - QTDL (cấp cuối)', [1, 1, 0, 0, 0]),
+                ('Thu hồi yêu cầu loại trừ đã duyệt', [1, 0, 0, 0, 0]),
+                ('Xem & xuất yêu cầu loại trừ đã duyệt', [1, 1, 1, 1, 1]),
+                ('Quản trị phân quyền, danh mục quy tắc, nhật ký', [1, 0, 0, 0, 0]),
               ] %}
               <tr><td class="text-start">{{ feature }}</td>
                 {% for a in allowed %}<td>{% if a %}<i class="bi bi-check-lg text-success"></i>{% else %}<span class="text-body-tertiary">—</span>{% endif %}</td>{% endfor %}
               </tr>
               {% endfor %}
-              <tr class="text-body-secondary"><td class="text-start">Phạm vi dữ liệu</td><td>Toàn hệ thống</td><td>Toàn hệ thống hoặc 1 chi nhánh</td><td>1 chi nhánh</td></tr>
+              <tr class="text-body-secondary"><td class="text-start">Phạm vi dữ liệu</td><td>Toàn hệ thống</td>
+                <td>Toàn hệ thống hoặc 1 CN</td><td>Toàn hệ thống hoặc 1 CN</td><td>1 chi nhánh</td><td>1 chi nhánh</td></tr>
             </tbody>
           </table>
+          <div class="small text-body-secondary mt-2">
+            Luồng duyệt: LĐ phòng ban → Nghiệp vụ → QTDL (yêu cầu do Quản trị DQ khai báo bắt đầu từ cấp Nghiệp vụ).
+            Không ai duyệt yêu cầu của chính mình, và một người không duyệt 2 cấp của cùng yêu cầu.
+          </div>
         </div>
       </div>
     </div>
@@ -185,7 +194,7 @@
         <div class="col-12">
           <div class="form-check form-switch">
             <input class="form-check-input" type="checkbox" role="switch" id="p_all_branches" name="all_branches" value="1">
-            <label class="form-check-label" for="p_all_branches">Xem toàn hệ thống <span class="small text-body-secondary">(chỉ áp dụng cho Người phê duyệt)</span></label>
+            <label class="form-check-label" for="p_all_branches">Xem toàn hệ thống <span class="small text-body-secondary">(chỉ áp dụng cho Phê duyệt QTDL / nghiệp vụ)</span></label>
           </div>
           <div class="form-check form-switch">
             <input class="form-check-input" type="checkbox" role="switch" id="p_is_active" name="is_active" value="1" checked>
@@ -197,7 +206,7 @@
           <input class="form-control" id="p_note" name="note" maxlength="500" placeholder="vd: Theo QĐ số ... ngày ...">
         </div>
         <div class="col-12 small text-body-secondary">
-          <i class="bi bi-info-circle"></i> Quản trị DQ luôn xem toàn hệ thống; User chi nhánh luôn chỉ xem chi nhánh của mình.
+          <i class="bi bi-info-circle"></i> Quản trị DQ luôn xem toàn hệ thống; Lãnh đạo phòng ban và User chi nhánh luôn chỉ xem chi nhánh của mình.
           Nếu không chọn chi nhánh, hệ thống dùng chi nhánh từ thuộc tính AD.
         </div>
       </div>
@@ -219,7 +228,7 @@
     const role = $("p_role").value;
     const all = $("p_all_branches");
     if (role === "admin") { all.checked = true; all.disabled = true; }
-    else if (role === "branch_user") { all.checked = false; all.disabled = true; }
+    else if (role === "branch_user" || role === "branch_manager") { all.checked = false; all.disabled = true; }
     else { all.disabled = false; }
   };
   $("p_role").addEventListener("change", syncScope);

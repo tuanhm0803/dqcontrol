@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from config import settings
 from database import get_db
 from mock_data import MOCK_USERS
-from models import ADIdentity, CurrentUser, Role, UserPermission
+from models import HQ_ROLES, ADIdentity, CurrentUser, Role, UserPermission
 
 logger = logging.getLogger("dq.auth")
 
@@ -37,15 +37,16 @@ def group_cn(dn: str) -> str:
     return first[3:] if first.upper().startswith("CN=") else first
 
 
+def group_roles() -> list[tuple[str, Role]]:
+    """(nhóm AD, vai trò) theo thứ tự ưu tiên khi user thuộc nhiều nhóm."""
+    return [(settings.LDAP_GROUP_ADMIN, Role.ADMIN), (settings.LDAP_GROUP_APPROVER, Role.APPROVER),
+            (settings.LDAP_GROUP_BUSINESS, Role.BUSINESS_APPROVER), (settings.LDAP_GROUP_MANAGER, Role.BRANCH_MANAGER),
+            (settings.LDAP_GROUP_USER, Role.BRANCH_USER)]
+
+
 def role_from_groups(groups: list[str]) -> Role | None:
     names = {g.upper() for g in groups}
-    if settings.LDAP_GROUP_ADMIN.upper() in names:
-        return Role.ADMIN
-    if settings.LDAP_GROUP_APPROVER.upper() in names:
-        return Role.APPROVER
-    if settings.LDAP_GROUP_USER.upper() in names:
-        return Role.BRANCH_USER
-    return None
+    return next((role for group, role in group_roles() if group.upper() in names), None)
 
 
 def resolve_user(db: Session, identity: ADIdentity) -> CurrentUser:
@@ -62,17 +63,17 @@ def resolve_user(db: Session, identity: ADIdentity) -> CurrentUser:
         role = role_from_groups(identity.groups)
         if role is None:
             raise AuthError(
-                f"Tài khoản không thuộc nhóm {settings.LDAP_GROUP_ADMIN}, {settings.LDAP_GROUP_APPROVER} "
-                f"hoặc {settings.LDAP_GROUP_USER} và chưa được phân quyền. Vui lòng liên hệ quản trị hệ thống."
+                f"Tài khoản không thuộc nhóm {', '.join(g for g, _ in group_roles())} và chưa được phân quyền. "
+                "Vui lòng liên hệ quản trị hệ thống."
             )
         branch_code = identity.branch_code
-        # Nhóm phê duyệt trên AD mặc định là bộ phận Hội sở, xem được toàn hệ thống
-        all_branches = role in (Role.ADMIN, Role.APPROVER)
+        # Nhóm phê duyệt QTDL / nghiệp vụ trên AD mặc định là bộ phận Hội sở, xem được toàn hệ thống
+        all_branches = role in HQ_ROLES
         source = "AD"
 
     if role == Role.ADMIN:
         all_branches = True
-    elif role == Role.BRANCH_USER:
+    elif role in (Role.BRANCH_USER, Role.BRANCH_MANAGER):
         all_branches = False
     if not all_branches and not branch_code:
         raise AuthError("Tài khoản chưa được gán Mã chi nhánh.")
@@ -179,6 +180,13 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> Current
 def require_admin(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
     if not user.is_admin:
         raise HTTPException(status_code=403, detail="Chức năng chỉ dành cho Quản trị DQ.")
+    return user
+
+
+def require_error_viewer(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+    """Dashboard / API / xuất file lỗi DQ: chỉ Quản trị DQ và Người phê duyệt."""
+    if not user.can_view_errors:
+        raise HTTPException(status_code=403, detail="Chức năng chỉ dành cho Quản trị DQ và Người phê duyệt.")
     return user
 
 

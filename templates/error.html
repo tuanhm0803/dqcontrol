@@ -6,6 +6,6 @@
   <i class="bi {{ 'bi-shield-exclamation' if status_code == 403 else 'bi-question-circle' }} display-4 text-body-secondary"></i>
   <h1 class="h4 mt-3">{{ 'Không có quyền truy cập' if status_code == 403 else 'Không tìm thấy trang' }}</h1>
   <p class="text-body-secondary">{{ detail if detail and detail != 'Not Found' else '' }}</p>
-  <a href="/dashboard" class="btn btn-dq"><i class="bi bi-arrow-left me-1"></i>Về Dashboard</a>
+  <a href="/" class="btn btn-dq"><i class="bi bi-arrow-left me-1"></i>Về trang chủ</a>
 </div>
 {% endblock %}

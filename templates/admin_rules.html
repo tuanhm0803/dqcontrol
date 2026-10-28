@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block title %}Danh mục quy tắc · {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-4 py-4">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div>
+      <h1 class="h4 fw-semibold mb-1">Danh mục mã quy tắc DQ</h1>
+      <div class="text-body-secondary small">
+        Danh mục dùng cho khai báo yêu cầu loại trừ (form, file mẫu, kiểm tra mã).
+        <span class="badge text-bg-success">{{ n_active }} đang dùng</span>
+        <span class="badge text-bg-secondary">{{ n_inactive }} ngừng dùng</span>
+      </div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-success" href="/admin/rules/export"><i class="bi bi-download me-1"></i>Tải danh mục (.xlsx)</a>
+      <button type="button" class="btn btn-dq" data-bs-toggle="modal" data-bs-target="#ruleModal">
+        <i class="bi bi-plus-lg me-1"></i>Thêm mã quy tắc
+      </button>
+    </div>
+  </div>
+
+  <!-- Upload thay thế toàn bộ -->
+  <div class="card border-0 shadow-sm mb-4">
+    <div class="card-body">
+      <h2 class="h6 fw-semibold mb-2"><i class="bi bi-file-earmark-arrow-up me-1"></i>Upload danh mục (thay thế toàn bộ)</h2>
+      <ul class="small text-body-secondary mb-3">
+        <li>Dùng file <a href="/admin/rules/export">tải danh mục</a> làm mẫu: cột <em>Mã quy tắc DQ</em> và <em>Tên quy tắc DQ</em>, mỗi dòng một mã.</li>
+        <li>Mã trong file được thêm / cập nhật tên và chuyển <strong>Đang dùng</strong>; mã đang có nhưng
+          <strong>không có trong file chuyển Ngừng dùng</strong> (không xóa, yêu cầu cũ vẫn hiển thị tên).</li>
+        <li>Chỉ cần một dòng sai (thiếu tên, mã sai định dạng, trùng mã) thì cả file bị từ chối, danh mục giữ nguyên.</li>
+      </ul>
+      <form method="post" action="/admin/rules/upload" enctype="multipart/form-data" class="d-flex flex-wrap gap-2"
+            onsubmit="return confirm('Thay thế toàn bộ danh mục bằng file này? Mã không có trong file sẽ chuyển Ngừng dùng.')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+        <input class="form-control" style="max-width: 420px" type="file" name="file" required aria-label="File danh mục"
+               accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+        <button type="submit" class="btn btn-success"><i class="bi bi-upload me-1"></i>Upload và thay thế</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="card border-0 shadow-sm">
+    <div class="card-header bg-body py-3">
+      <form method="get" action="/admin/rules" class="d-flex flex-wrap align-items-center gap-2">
+        <span class="fw-semibold me-auto"><i class="bi bi-list-ul me-1"></i>Mã quy tắc <span class="small text-body-secondary fw-normal">({{ rules | length }})</span></span>
+        <select name="show" class="form-select form-select-sm w-auto" aria-label="Trạng thái">
+          <option value="">Tất cả</option>
+          <option value="active" {{ 'selected' if f.show == 'active' }}>Đang dùng</option>
+          <option value="inactive" {{ 'selected' if f.show == 'inactive' }}>Ngừng dùng</option>
+        </select>
+        <input type="search" name="keyword" value="{{ f.keyword or '' }}" class="form-control form-control-sm w-auto"
+               placeholder="Mã / tên quy tắc..." aria-label="Từ khóa" maxlength="100">
+        <button class="btn btn-sm btn-dq"><i class="bi bi-funnel"></i></button>
+      </form>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-hover table-dq mb-0">
+        <thead><tr><th>Mã quy tắc</th><th>Tên quy tắc</th><th>Trạng thái</th><th class="text-end">Số yêu cầu</th><th>Cập nhật</th><th></th></tr></thead>
+        <tbody>
+          {% for r in rules %}
+          <tr class="{{ 'table-secondary' if not r.is_active }}">
+            <td class="text-nowrap"><span class="font-monospace">{{ r.rule_code }}</span></td>
+            <td>{{ r.rule_name }}</td>
+            <td>{% if r.is_active %}<span class="badge text-bg-success">Đang dùng</span>{% else %}<span class="badge text-bg-secondary">Ngừng dùng</span>{% endif %}</td>
+            <td class="text-end">{{ usage.get(r.rule_code, 0) }}</td>
+            <td class="small text-nowrap">{{ r.updated_by }}<div class="text-body-secondary">{{ r.updated_at.strftime('%d/%m/%Y %H:%M') }}</div></td>
+            <td class="text-nowrap">
+              <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#ruleModal"
+                      data-code="{{ r.rule_code }}" data-name="{{ r.rule_name }}" data-active="{{ 1 if r.is_active else 0 }}">
+                <i class="bi bi-pencil"></i> Sửa</button>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6" class="text-center text-body-secondary py-4">
+            Chưa có mã quy tắc nào{{ ' khớp bộ lọc' if f.keyword or f.show }}. Người dùng chưa khai báo loại trừ được cho tới khi có danh mục.
+          </td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Modal thêm / sửa mã quy tắc -->
+<div class="modal fade" id="ruleModal" tabindex="-1" aria-labelledby="ruleModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <form class="modal-content" method="post" action="/admin/rules">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+      <div class="modal-header">
+        <h2 class="modal-title h5" id="ruleModalLabel">Mã quy tắc</h2>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Đóng"></button>
+      </div>
+      <div class="modal-body row g-3">
+        <div class="col-12">
+          <label class="form-label fw-semibold" for="r_code">Mã quy tắc <span class="text-danger">*</span></label>
+          <input class="form-control font-monospace text-uppercase" id="r_code" name="rule_code" required maxlength="50"
+                 pattern="[A-Za-z0-9_.\-]+" placeholder="vd: DQ_CUS_001">
+          <div class="form-text">Chữ, số và _ . - ; tự chuyển chữ hoa.</div>
+        </div>
+        <div class="col-12">
+          <label class="form-label fw-semibold" for="r_name">Tên quy tắc <span class="text-danger">*</span></label>
+          <input class="form-control" id="r_name" name="rule_name" required maxlength="500">
+        </div>
+        <div class="col-12">
+          <div class="form-check form-switch">
+            <input class="form-check-input" type="checkbox" role="switch" id="r_active" name="is_active" value="1" checked>
+            <label class="form-check-label" for="r_active">Đang dùng <span class="small text-body-secondary">(tắt = không khai báo loại trừ mới được cho mã này)</span></label>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Hủy</button>
+        <button type="submit" class="btn btn-dq"><i class="bi bi-save me-1"></i>Lưu</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById("ruleModal").addEventListener("show.bs.modal", (e) => {
+  const d = e.relatedTarget?.dataset || {};
+  const editing = !!d.code;
+  document.getElementById("ruleModalLabel").textContent = editing ? `Sửa mã quy tắc ${d.code}` : "Thêm mã quy tắc";
+  document.getElementById("r_code").value = d.code || "";
+  document.getElementById("r_code").readOnly = editing;
+  document.getElementById("r_name").value = d.name || "";
+  document.getElementById("r_active").checked = editing ? d.active === "1" : true;
+});
+</script>
+{% endblock %}

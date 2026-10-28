@@ -24,7 +24,7 @@ def login_page(request: Request, next: str | None = None):
 
 @router.post("/login")
 async def login_submit(request: Request, username: str = Form(""), password: str = Form(""),
-                       next: str = Form("/dashboard"), db: Session = Depends(get_db)):
+                       next: str = Form("/"), db: Session = Depends(get_db)):
     client = request.client.host if request.client else "?"
     try:
         # ldap3 là thư viện đồng bộ -> chạy trong threadpool để không chặn event loop

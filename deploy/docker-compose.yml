@@ -1,0 +1,21 @@
+# Chạy trên VPS tại /opt/dqcontrol. Workflow copy file này lên và ghi .env (APP_IMAGE) + app.env.
+# HTTPS do edge-nginx (repo tuanhm_edge_proxy) đảm nhận: nó proxy dq.tuanhm.pro -> dq-app:8080
+# qua mạng edge-network, nên container này không mở cổng nào ra host.
+services:
+  app:
+    image: ${APP_IMAGE:-ghcr.io/tuanhm0803/dqcontrol:latest}
+    container_name: dq-app
+    restart: unless-stopped
+    env_file: app.env
+    volumes:
+      - dq-data:/data
+    networks:
+      - edge-network
+
+volumes:
+  dq-data:
+
+networks:
+  edge-network:
+    external: true
+    name: edge-network

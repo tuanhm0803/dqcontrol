@@ -11,7 +11,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from sqlalchemy.orm import Session
 
-from auth import get_current_user
+from auth import require_error_viewer
 from config import settings
 from database import get_db
 from models import EXPORT_COLUMNS, CurrentUser, DQErrorOut, DQFilter, Severity
@@ -176,21 +176,21 @@ def _write_summary_sheet(ws2, rows: list[DQErrorOut]) -> None:
     ws2.freeze_panes = "A2"
 
 
-def _attachment(filename: str) -> dict[str, str]:
+def attachment(filename: str) -> dict[str, str]:
     return {"Content-Disposition": f'attachment; filename="{filename}"'}
 
 
 @router.get("/excel")
-def export_excel(user: CurrentUser = Depends(get_current_user), filters: DQFilter = Depends(get_filters),
+def export_excel(user: CurrentUser = Depends(require_error_viewer), filters: DQFilter = Depends(get_filters),
                  db: Session = Depends(get_db)):
     scoped = user.scope(filters)
     rows, truncated = _load_rows(db, scoped, user, "xlsx")
     buf = build_excel(rows, user, scoped, truncated)
-    return StreamingResponse(buf, media_type=XLSX_MIME, headers=_attachment(_filename("xlsx", scoped, user)))
+    return StreamingResponse(buf, media_type=XLSX_MIME, headers=attachment(_filename("xlsx", scoped, user)))
 
 
 @router.get("/csv")
-def export_csv(user: CurrentUser = Depends(get_current_user), filters: DQFilter = Depends(get_filters),
+def export_csv(user: CurrentUser = Depends(require_error_viewer), filters: DQFilter = Depends(get_filters),
                db: Session = Depends(get_db)):
     scoped = user.scope(filters)
     rows, _ = _load_rows(db, scoped, user, "csv")
@@ -203,4 +203,4 @@ def export_csv(user: CurrentUser = Depends(get_current_user), filters: DQFilter 
     df.to_csv(buf, index=False, encoding="utf-8-sig", date_format="%d/%m/%Y")
     buf.seek(0)
     return StreamingResponse(buf, media_type="text/csv; charset=utf-8",
-                             headers=_attachment(_filename("csv", scoped, user)))
+                             headers=attachment(_filename("csv", scoped, user)))

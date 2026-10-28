@@ -13,7 +13,7 @@
 
 <nav class="navbar navbar-expand-lg navbar-dark bg-dq shadow-sm">
   <div class="container-fluid px-4">
-    <a class="navbar-brand fw-semibold" href="/dashboard">
+    <a class="navbar-brand fw-semibold" href="/">
       <i class="bi bi-clipboard-data me-1"></i>{{ app_name }}
     </a>
     {% if user %}
@@ -23,20 +23,32 @@
     </button>
     <div class="collapse navbar-collapse" id="mainNav">
       <ul class="navbar-nav me-auto">
+        {% if user.can_view_errors %}
         <li class="nav-item">
           <a class="nav-link {{ 'active' if path.startswith('/dashboard') }}" href="/dashboard">
-            <i class="bi bi-speedometer2 me-1"></i>Dashboard</a>
+            <i class="bi bi-speedometer2 me-1"></i>Lỗi DQ</a>
         </li>
+        {% endif %}
         <li class="nav-item">
-          {% set n_pending = pending_exceptions(user) %}
-          <a class="nav-link {{ 'active' if path.startswith('/exceptions') }}" href="/exceptions">
-            <i class="bi bi-patch-check me-1"></i>Ngoại lệ
+          {% set n_pending = pending_exclusions(user) %}
+          <a class="nav-link {{ 'active' if path.startswith('/exclusions') and not path.startswith('/exclusions/new') }}" href="/exclusions">
+            <i class="bi bi-patch-check me-1"></i>Yêu cầu loại trừ
             {% if n_pending %}<span class="badge rounded-pill text-bg-warning ms-1" title="Yêu cầu chờ bạn phê duyệt">{{ n_pending }}</span>{% endif %}
           </a>
         </li>
+        {% if user.can_request %}
+        <li class="nav-item">
+          <a class="nav-link {{ 'active' if path.startswith('/exclusions/new') }}" href="/exclusions/new">
+            <i class="bi bi-plus-circle me-1"></i>Khai báo loại trừ</a>
+        </li>
+        {% endif %}
         {% if user.is_admin %}
         <li class="nav-item">
-          <a class="nav-link {{ 'active' if path.startswith('/admin') }}" href="/admin/permissions">
+          <a class="nav-link {{ 'active' if path.startswith('/admin/rules') }}" href="/admin/rules">
+            <i class="bi bi-list-ul me-1"></i>Danh mục quy tắc</a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link {{ 'active' if path.startswith('/admin/permissions') }}" href="/admin/permissions">
             <i class="bi bi-people-fill me-1"></i>Quản trị phân quyền</a>
         </li>
         {% endif %}

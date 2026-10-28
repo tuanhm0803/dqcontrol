@@ -1,0 +1,224 @@
+{% extends "base.html" %}
+{% block title %}Khai báo loại trừ · {{ app_name }}{% endblock %}
+
+{# Một dòng của bảng khai báo. r: dict trường (có thể có "error"); n: số thứ tự hiển thị.
+   Cột "Tên quy tắc" là ô chỉ đọc không có name (không gửi lên server), vẫn có data-col để dán từ Excel khớp cột của file mẫu. #}
+{% macro row(r, n) %}
+<tr class="excl-row{{ ' table-danger' if r.error }}">
+  <td class="text-body-secondary text-center row-no">{{ n }}</td>
+  <td><input class="form-control form-control-sm" name="branch_code" list="branchList" maxlength="20"
+             value="{{ r.branch_code or '' }}" placeholder="Mã CN" aria-label="Mã chi nhánh" data-col="branch_code"></td>
+  <td><input class="form-control form-control-sm" name="rule_code" list="ruleList" maxlength="50"
+             value="{{ r.rule_code or '' }}" placeholder="Mã quy tắc" aria-label="Mã quy tắc DQ" data-col="rule_code"></td>
+  <td><input class="form-control form-control-sm bg-body-tertiary rule-name" readonly tabindex="-1"
+             value="{{ rule_names.get((r.rule_code or '').upper(), '') }}" aria-label="Tên quy tắc DQ" data-col="rule_name"></td>
+  <td><input class="form-control form-control-sm font-monospace" name="record_key" maxlength="100"
+             value="{{ r.record_key or '' }}" placeholder="CIF / số TK / số HĐ" aria-label="Mã bản ghi" data-col="record_key"></td>
+  <td><input class="form-control form-control-sm" name="reason" maxlength="2000"
+             value="{{ r.reason or '' }}" placeholder="Tối thiểu {{ reason_min_length }} ký tự" aria-label="Lý do loại trừ" data-col="reason">
+    {% if r.error %}<div class="small text-danger mt-1"><i class="bi bi-exclamation-circle"></i> {{ r.error }}</div>{% endif %}
+  </td>
+  <td><input type="date" class="form-control form-control-sm" name="valid_to" min="{{ today.isoformat() }}"
+             value="{{ r.valid_to or '' }}" aria-label="Hiệu lực đến" data-col="valid_to" required></td>
+  <td class="text-nowrap">
+    <button type="button" class="btn btn-sm btn-outline-secondary btn-dup" title="Nhân bản dòng (giữ quy tắc, lý do, hiệu lực)">
+      <i class="bi bi-copy"></i></button>
+    <button type="button" class="btn btn-sm btn-outline-danger btn-del" title="Xóa dòng"><i class="bi bi-trash"></i></button>
+  </td>
+</tr>
+{% endmacro %}
+
+{% block content %}
+<div class="container-fluid px-4 py-4">
+
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
+    <div>
+      <h1 class="h4 fw-semibold mb-1">Khai báo yêu cầu loại trừ</h1>
+      <div class="text-body-secondary small">
+        Mỗi dòng là một yêu cầu: loại trừ một bản ghi (CIF / số tài khoản / số hợp đồng...) khỏi một quy tắc DQ.
+        Yêu cầu được duyệt qua {{ 'Nghiệp vụ → QTDL' if user.is_admin else 'LĐ phòng ban → Nghiệp vụ → QTDL' }};
+        trùng với yêu cầu <em>đã duyệt còn hiệu lực</em> sẽ bị bỏ qua.
+      </div>
+    </div>
+    <a href="/exclusions?tab=mine" class="btn btn-outline-secondary btn-sm"><i class="bi bi-list-check me-1"></i>Yêu cầu của tôi</a>
+  </div>
+
+  <ul class="nav nav-tabs mb-0" role="tablist">
+    <li class="nav-item" role="presentation">
+      <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tabManual" type="button" role="tab"
+              aria-controls="tabManual" aria-selected="true"><i class="bi bi-table me-1"></i>Nhập trực tiếp</button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabUpload" type="button" role="tab"
+              aria-controls="tabUpload" aria-selected="false"><i class="bi bi-file-earmark-arrow-up me-1"></i>Upload file Excel</button>
+    </li>
+  </ul>
+
+  <div class="tab-content">
+    <!-- Nhập trực tiếp: bảng nhiều dòng -->
+    <div class="tab-pane fade show active" id="tabManual" role="tabpanel">
+      <div class="card border-0 border-top-0 shadow-sm rounded-top-0">
+        <form method="post" action="/exclusions/new" id="manualForm" novalidate>
+          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+          <div class="px-3 pt-3 small text-body-secondary">
+            <i class="bi bi-info-circle"></i> Cột có <span class="text-danger">*</span> là bắt buộc.
+            Dòng mới có sẵn chi nhánh của bạn{{ ' (' ~ defaults.branch_code ~ ')' if defaults.branch_code }} và hiệu lực 1 tháng; sửa lại nếu cần.
+            Có thể <strong>dán nhiều dòng copy từ Excel</strong> (theo thứ tự cột của bảng / file mẫu) vào bất kỳ ô nào.
+            Dòng chưa có mã quy tắc, mã bản ghi và lý do được bỏ qua.
+          </div>
+          <div class="table-responsive">
+            <table class="table table-sm table-dq align-top mb-0" id="exclTable">
+              <thead>
+                <tr>
+                  <th class="text-center" style="width: 40px">#</th>
+                  <th style="width: 110px">Chi nhánh <span class="text-danger">*</span></th>
+                  <th style="width: 150px">Mã quy tắc DQ <span class="text-danger">*</span></th>
+                  <th style="min-width: 220px">Tên quy tắc DQ</th>
+                  <th style="width: 180px">Mã bản ghi <span class="text-danger">*</span></th>
+                  <th style="min-width: 240px">Lý do loại trừ <span class="text-danger">*</span></th>
+                  <th style="width: 150px">Hiệu lực đến <span class="text-danger">*</span></th>
+                  <th style="width: 90px"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for r in rows %}{{ row(r, loop.index) }}{% endfor %}
+              </tbody>
+            </table>
+          </div>
+          <div class="d-flex flex-wrap align-items-center gap-2 p-3 border-top">
+            <button type="button" class="btn btn-sm btn-outline-dq" id="addRow"><i class="bi bi-plus-lg me-1"></i>Thêm dòng</button>
+            <button type="button" class="btn btn-sm btn-outline-dq" id="addRows5"><i class="bi bi-plus-lg me-1"></i>Thêm 5 dòng</button>
+            <span class="small text-body-secondary ms-2"><span id="filledCount">0</span> dòng có dữ liệu · tối đa {{ max_manual_rows }} dòng</span>
+            <button type="submit" class="btn btn-dq ms-auto"><i class="bi bi-send me-1"></i>Gửi tất cả yêu cầu</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Upload Excel -->
+    <div class="tab-pane fade" id="tabUpload" role="tabpanel">
+      <div class="card border-0 shadow-sm rounded-top-0">
+        <div class="card-body">
+          <ol class="small text-body-secondary ps-3">
+            <li>Tải <a href="/exclusions/template"><i class="bi bi-download"></i> file mẫu</a>
+              (đã kèm danh mục chi nhánh, mã và tên quy tắc; cột tên quy tắc tự hiện khi chọn mã).</li>
+            <li>Mỗi dòng một bản ghi: <em>Mã chi nhánh{{ ' (bỏ trống = ' ~ user.branch_code ~ ')' if user.branch_code }}</em>,
+              <em>Mã quy tắc DQ</em>, <em>Mã bản ghi</em>, <em>Lý do loại trừ</em>, <em>Hiệu lực đến</em> (dd/mm/yyyy, bắt buộc).</li>
+            <li>Upload file .xlsx, tối đa {{ '{:,}'.format(max_rows) }} dòng / {{ max_mb }} MB.
+              Dòng sai bị bỏ qua và báo lại số dòng; các dòng hợp lệ vẫn được gửi.</li>
+          </ol>
+          <form method="post" action="/exclusions/upload" enctype="multipart/form-data" class="mt-3" style="max-width: 560px">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+            <label class="form-label small fw-semibold" for="file">File yêu cầu loại trừ (.xlsx)</label>
+            <input class="form-control mb-3" type="file" id="file" name="file" required
+                   accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+            <button type="submit" class="btn btn-success"><i class="bi bi-upload me-1"></i>Upload và gửi yêu cầu</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<datalist id="ruleList">{% for code, name in rules %}<option value="{{ code }}">{{ name }}</option>{% endfor %}</datalist>
+<datalist id="branchList">{% for code, name in branches %}<option value="{{ code }}">{{ name }}</option>{% endfor %}</datalist>
+<template id="rowTemplate">{{ row(defaults, '') }}</template>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+  const MAX = {{ max_manual_rows }}, MIN_REASON = {{ reason_min_length }};
+  const tbody = document.querySelector("#exclTable tbody");
+  const tpl = document.getElementById("rowTemplate");
+  const cols = [...tpl.content.querySelectorAll("[data-col]")].map(e => e.dataset.col);
+  const RULE_NAMES = {{ rule_names | tojson }};  // mã quy tắc (chữ hoa) -> tên
+  const rows = () => [...tbody.querySelectorAll("tr.excl-row")];
+  const val = (tr, col) => tr.querySelector(`[data-col="${col}"]`).value.trim();
+  // Dòng có dữ liệu = đã nhập quy tắc / mã bản ghi / lý do (chi nhánh và hiệu lực có sẵn mặc định)
+  const filled = (tr) => ["rule_code", "record_key", "reason"].some(c => val(tr, c));
+  const setRuleName = (tr) => {
+    tr.querySelector('[data-col="rule_name"]').value = RULE_NAMES[val(tr, "rule_code").toUpperCase()] || "";
+  };
+
+  const refresh = () => {
+    rows().forEach((tr, i) => tr.querySelector(".row-no").textContent = i + 1);
+    document.getElementById("filledCount").textContent = rows().filter(filled).length;
+  };
+  const addRow = (after, values = {}) => {
+    if (rows().length >= MAX) { alert(`Tối đa ${MAX} dòng mỗi lần; số lượng lớn hơn hãy dùng upload Excel.`); return null; }
+    const tr = tpl.content.firstElementChild.cloneNode(true);
+    Object.entries(values).forEach(([k, v]) => { const el = tr.querySelector(`[data-col="${k}"]`); if (el) el.value = v; });
+    setRuleName(tr);
+    after ? after.after(tr) : tbody.append(tr);
+    refresh();
+    return tr;
+  };
+
+  document.getElementById("addRow").addEventListener("click", () => addRow()?.querySelector('[data-col="rule_code"]').focus());
+  document.getElementById("addRows5").addEventListener("click", () => { for (let i = 0; i < 5; i++) addRow(); });
+
+  tbody.addEventListener("click", (e) => {
+    const tr = e.target.closest("tr");
+    if (e.target.closest(".btn-del")) {
+      if (rows().length === 1) addRow(tr);  // luôn còn ít nhất một dòng (dòng mới có giá trị mặc định)
+      tr.remove();
+      refresh();
+    } else if (e.target.closest(".btn-dup")) {
+      // Nhân bản: giữ chi nhánh, quy tắc, lý do, hiệu lực; để trống mã bản ghi
+      const values = {};
+      ["branch_code", "rule_code", "reason", "valid_to"].forEach(c => values[c] = val(tr, c));
+      addRow(tr, values)?.querySelector('[data-col="record_key"]').focus();
+    }
+  });
+  tbody.addEventListener("input", (e) => {
+    const tr = e.target.closest("tr");
+    tr.classList.remove("table-danger");
+    e.target.classList.remove("is-invalid");
+    if (e.target.dataset.col === "rule_code") setRuleName(tr);
+    refresh();
+  });
+
+  // Dán vùng copy từ Excel (tab giữa các cột, xuống dòng giữa các dòng) bắt đầu từ ô đang chọn
+  tbody.addEventListener("paste", (e) => {
+    const text = (e.clipboardData || window.clipboardData).getData("text");
+    if (!/[\t\n]/.test(text.trim())) return;
+    e.preventDefault();
+    const start = cols.indexOf(e.target.dataset.col);
+    let tr = e.target.closest("tr");
+    text.replace(/\r/g, "").replace(/\n+$/, "").split("\n").forEach((line, i) => {
+      if (i > 0) tr = tr.nextElementSibling || addRow();
+      if (!tr) return;
+      line.split("\t").forEach((v, j) => {
+        const col = cols[start + j], el = tr.querySelector(`[data-col="${col}"]`);
+        v = v.trim();
+        // Bỏ qua cột tên quy tắc (tự tính); ô trống không ghi đè chi nhánh / hiệu lực mặc định
+        if (!el || col === "rule_name" || (!v && (col === "branch_code" || col === "valid_to"))) return;
+        const m = el.type === "date" && v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);  // dd/mm/yyyy -> yyyy-mm-dd
+        el.value = m ? `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}` : v;
+      });
+      setRuleName(tr);
+    });
+    refresh();
+  });
+
+  // Kiểm tra phía trình duyệt (server vẫn kiểm tra lại)
+  document.getElementById("manualForm").addEventListener("submit", (e) => {
+    let firstBad = null, any = false;
+    rows().filter(filled).forEach(tr => {
+      any = true;
+      tr.querySelectorAll("[data-col]").forEach(el => {
+        const v = el.value.trim(), col = el.dataset.col;
+        const bad = (["branch_code", "rule_code", "record_key", "valid_to"].includes(col) && !v)
+          || (col === "reason" && v.length < MIN_REASON);
+        el.classList.toggle("is-invalid", bad);
+        if (bad && !firstBad) firstBad = el;
+      });
+    });
+    if (!any) { e.preventDefault(); alert("Vui lòng nhập ít nhất một dòng."); return; }
+    if (firstBad) { e.preventDefault(); firstBad.focus(); }
+  });
+  refresh();
+})();
+</script>
+{% endblock %}

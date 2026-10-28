@@ -3,7 +3,7 @@
 - USE_MOCK_DATA / MOCK_DB = True: dùng file SQLite MOCK_DATABASE_URL, tự tạo bảng và nạp dữ liệu
   từ mock_data.py ở lần chạy đầu (dữ liệu được giữ lại giữa các lần khởi động).
 - USE_MOCK_DATA = False: kết nối DATABASE_URL (SQL Server / Oracle / PostgreSQL...), tự tạo các bảng
-  của ứng dụng (ngoại lệ, phân quyền, nhật ký) nếu chưa có. Không kết nối được và
+  của ứng dụng (danh mục quy tắc, yêu cầu loại trừ, phân quyền, nhật ký) nếu chưa có. Không kết nối được và
   DB_FALLBACK_TO_MOCK = True -> chuyển sang dữ liệu giả lập.
 
 CLI:
@@ -19,8 +19,8 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from config import settings
-from mock_data import generate_mock_dataset
-from models import APP_TABLES, AuditLog, Base, DQError, ExceptionRequest, UserPermission
+from mock_data import generate_mock_dataset, mock_rules
+from models import APP_TABLES, AuditLog, Base, DQError, DQRule, ExclusionRequest, UserPermission
 
 logger = logging.getLogger("dq.database")
 
@@ -39,24 +39,50 @@ def _make_engine(url: str) -> Engine:
     return create_engine(url, **kwargs)
 
 
+def _count(s: Session, model) -> int:
+    return s.scalar(select(func.count()).select_from(model)) or 0
+
+
 def seed_mock_data(engine: Engine, force: bool = False) -> None:
+    """Nạp lỗi DQ + yêu cầu loại trừ giả lập (khi bảng lỗi trống hoặc force) và danh mục quy tắc (khi trống)."""
     with Session(engine) as s:
         if force:
-            for model in (ExceptionRequest, DQError):
+            for model in (ExclusionRequest, DQError, DQRule):
                 s.execute(delete(model))
-        elif s.scalar(select(func.count()).select_from(DQError)):
+        if not _count(s, DQRule):
+            s.add_all(DQRule(**r) for r in mock_rules())
+            logger.info("Đã nạp danh mục mã quy tắc giả lập")
+        if _count(s, DQError):
+            s.commit()
             return
-        errors, requests = generate_mock_dataset()
+        errors, exclusions = generate_mock_dataset()
         s.add_all(DQError(**r) for r in errors)
-        s.add_all(ExceptionRequest(**r) for r in requests)
+        s.add_all(ExclusionRequest(**r) for r in exclusions)
         s.commit()
-    logger.info("Đã nạp %d lỗi DQ và %d yêu cầu ngoại lệ giả lập", len(errors), len(requests))
+    logger.info("Đã nạp %d lỗi DQ và %d yêu cầu loại trừ giả lập", len(errors), len(exclusions))
+
+
+def _missing_columns(engine: Engine, table) -> list[str]:
+    insp = inspect(engine)
+    if not insp.has_table(table.name, schema=table.schema):
+        return []
+    existing = {c["name"].lower() for c in insp.get_columns(table.name, schema=table.schema)}
+    return sorted(c.name for c in table.columns if c.name.lower() not in existing)
 
 
 def _init_mock() -> Engine:
     engine = _make_engine(settings.MOCK_DATABASE_URL)
+    # File mock từ phiên bản cũ: bảng yêu cầu loại trừ thiếu cột (duyệt nhiều cấp) -> tạo lại bảng
+    stale = bool(_missing_columns(engine, ExclusionRequest.__table__))
+    if stale:
+        ExclusionRequest.__table__.drop(engine)
     Base.metadata.create_all(engine)
-    seed_mock_data(engine)
+    with Session(engine) as s:
+        # ... hoặc chưa có yêu cầu loại trừ nào (phiên bản luồng ngoại lệ) -> nạp lại toàn bộ
+        stale = stale or (bool(_count(s, DQError)) and not _count(s, ExclusionRequest))
+    if stale:
+        logger.info("Dữ liệu giả lập thuộc phiên bản cũ -> nạp lại")
+    seed_mock_data(engine, force=stale)
     return engine
 
 
@@ -88,6 +114,11 @@ def init_database() -> None:
                 engine = _make_engine(settings.DATABASE_URL)
                 _check_dq_table(engine)
                 Base.metadata.create_all(engine, tables=APP_TABLES)
+                # create_all không thêm cột vào bảng đã có -> báo rõ thay vì lỗi SQL khi chạy
+                for table in APP_TABLES:
+                    if missing := _missing_columns(engine, table):
+                        raise RuntimeError(f"Bảng '{table.name}' thiếu cột {missing} (bảng tạo từ phiên bản cũ). "
+                                           "Cần ALTER TABLE thêm cột, xem mục 'Kết nối CSDL thật' trong README.")
                 source = "database"
                 logger.info("Đã kết nối CSDL: %s", engine.url.render_as_string(hide_password=True))
             except Exception:

@@ -1,25 +1,38 @@
-"""Trang quản trị: phân quyền người dùng (ghi đè quyền theo nhóm AD) và nhật ký hệ thống."""
+"""Trang quản trị: phân quyền người dùng (ghi đè quyền theo nhóm AD), nhật ký hệ thống, danh mục mã quy tắc."""
 import math
+import os
 import re
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Form, Query, Request
+from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from auth import normalize_username, require_admin, verify_csrf
+from auth import group_roles, normalize_username, require_admin, verify_csrf
 from config import settings
 from database import get_db
-from models import ROLE_LABELS, AuditLog, CurrentUser, Role, UserPermission, UserPermissionOut
+from models import (ROLE_LABELS, AuditLog, CurrentUser, DQRule, DQRuleOut, ExclusionRequest, Role,
+                    UserPermission, UserPermissionOut)
 from repository import keyword_condition, list_branches
 from routers import flash, redirect, templates
-from workflow import audit
+from routers.exclusion_files import UploadError, build_rules_excel, parse_rules_upload
+from routers.export_router import XLSX_MIME, attachment
+from workflow import RuleInput, WorkflowError, audit, replace_rules, save_rule
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 USERNAME_RE = re.compile(r"^[a-z0-9._-]{1,100}$")
-AUDIT_ACTIONS = ["LOGIN", "STATUS_UPDATE", "EXC_REQUEST", "EXC_APPROVE", "EXC_REJECT", "EXC_CANCEL",
-                 "EXC_REVOKE", "PERM_UPSERT", "PERM_DELETE", "EXPORT"]
+AUDIT_ACTIONS = ["LOGIN", "STATUS_UPDATE", "EXCL_REQUEST", "EXCL_UPLOAD", "EXCL_APPROVE", "EXCL_REJECT",
+                 "EXCL_CANCEL", "EXCL_REVOKE", "EXCL_EXPORT", "RULE_UPSERT", "RULE_UPLOAD", "PERM_UPSERT",
+                 "PERM_DELETE", "EXPORT"]
+ROLE_SCOPES = {
+    Role.ADMIN: "Toàn hệ thống; quản trị phân quyền, danh mục quy tắc; duyệt mọi cấp",
+    Role.APPROVER: "Toàn hệ thống; xem lỗi DQ; duyệt cấp QTDL (cấp cuối)",
+    Role.BUSINESS_APPROVER: "Toàn hệ thống; xem lỗi DQ; duyệt cấp Nghiệp vụ",
+    Role.BRANCH_MANAGER: f"Chi nhánh theo thuộc tính AD '{settings.LDAP_BRANCH_ATTRIBUTE}'; duyệt cấp LĐ phòng ban",
+    Role.BRANCH_USER: f"Chi nhánh theo thuộc tính AD '{settings.LDAP_BRANCH_ATTRIBUTE}'; khai báo yêu cầu loại trừ",
+}
 
 
 @router.get("")
@@ -62,12 +75,7 @@ def permissions_page(
         "params": {k: v for k, v in {"action": action, "keyword": keyword}.items() if v},
         "audit_actions": AUDIT_ACTIONS,
         "f": {"action": action, "keyword": keyword},
-        "ad_groups": [
-            (settings.LDAP_GROUP_ADMIN, ROLE_LABELS[Role.ADMIN], "Toàn hệ thống; quản trị phân quyền; phê duyệt"),
-            (settings.LDAP_GROUP_APPROVER, ROLE_LABELS[Role.APPROVER], "Toàn hệ thống; phê duyệt / từ chối ngoại lệ"),
-            (settings.LDAP_GROUP_USER, ROLE_LABELS[Role.BRANCH_USER],
-             f"Chi nhánh theo thuộc tính AD '{settings.LDAP_BRANCH_ATTRIBUTE}'; xử lý lỗi, gửi ngoại lệ"),
-        ],
+        "ad_groups": [(group, ROLE_LABELS[role], ROLE_SCOPES[role]) for group, role in group_roles()],
     })
 
 
@@ -83,7 +91,7 @@ def _validate(username: str, role: str, branch_code: str | None, all_branches: b
         raise ValueError("Không thể tự hạ quyền hoặc khóa chính tài khoản của bạn.")
     if role_enum == Role.ADMIN:
         all_branches = True
-    elif role_enum == Role.BRANCH_USER:
+    elif role_enum in (Role.BRANCH_USER, Role.BRANCH_MANAGER):
         all_branches = False
     if not all_branches and not branch_code:
         raise ValueError("Cần chọn Mã chi nhánh khi không cho xem toàn hệ thống.")
@@ -152,3 +160,67 @@ def delete_permission(request: Request, username: str, user: CurrentUser = Depen
         db.commit()
         flash(request, f"Đã xóa phân quyền nội bộ của '{username}' - người dùng quay về quyền theo nhóm AD.")
     return redirect("/admin/permissions")
+
+
+# --------------------------------------------------------------------------- #
+# Danh mục mã quy tắc
+# --------------------------------------------------------------------------- #
+@router.get("/rules")
+def rules_page(request: Request, keyword: str | None = None, show: str | None = None,
+               user: CurrentUser = Depends(require_admin), db: Session = Depends(get_db)):
+    keyword = (keyword or "").strip()[:100] or None
+    show = show if show in ("active", "inactive") else None
+    conds = []
+    if keyword:
+        conds.append(keyword_condition(keyword, DQRule.rule_code, DQRule.rule_name))
+    if show:
+        conds.append(DQRule.is_active.is_(show == "active"))
+    rules = [DQRuleOut.model_validate(r) for r in db.scalars(select(DQRule).where(*conds).order_by(DQRule.rule_code))]
+    usage = dict(db.execute(select(ExclusionRequest.rule_code, func.count()).group_by(ExclusionRequest.rule_code)).all())
+    counts = dict(db.execute(select(DQRule.is_active, func.count()).group_by(DQRule.is_active)).all())
+    return templates.TemplateResponse(request, "admin_rules.html", {
+        "user": user,
+        "rules": rules,
+        "usage": usage,
+        "n_active": counts.get(True, 0),
+        "n_inactive": counts.get(False, 0),
+        "f": {"keyword": keyword, "show": show},
+    })
+
+
+@router.post("/rules", dependencies=[Depends(verify_csrf)])
+def save_rule_route(request: Request, rule_code: str = Form(""), rule_name: str = Form(""),
+                    is_active: str | None = Form(None), user: CurrentUser = Depends(require_admin),
+                    db: Session = Depends(get_db)):
+    try:
+        created = save_rule(db, user, RuleInput("", rule_code, rule_name), is_active is not None)
+        flash(request, f"Đã {'thêm' if created else 'cập nhật'} mã quy tắc {rule_code.strip().upper()}.")
+    except WorkflowError as exc:
+        flash(request, str(exc), "danger")
+    return redirect("/admin/rules")
+
+
+@router.get("/rules/export")
+def export_rules(user: CurrentUser = Depends(require_admin), db: Session = Depends(get_db)):
+    rules = [DQRuleOut.model_validate(r) for r in db.scalars(select(DQRule).order_by(DQRule.rule_code))]
+    return StreamingResponse(build_rules_excel(rules), media_type=XLSX_MIME,
+                             headers=attachment(f"Danh_muc_quy_tac_{datetime.now():%Y%m%d_%H%M%S}.xlsx"))
+
+
+@router.post("/rules/upload", dependencies=[Depends(verify_csrf)])
+def upload_rules(request: Request, file: UploadFile = File(...), user: CurrentUser = Depends(require_admin),
+                 db: Session = Depends(get_db)):
+    filename = os.path.basename(file.filename or "rules.xlsx")[:200]
+    limit = settings.EXCLUSION_UPLOAD_MAX_MB * 1024 * 1024
+    data = file.file.read(limit + 1)
+    try:
+        if not filename.lower().endswith(".xlsx"):
+            raise UploadError("Chỉ nhận file Excel .xlsx (tải danh mục hiện tại để làm mẫu).")
+        if len(data) > limit:
+            raise UploadError(f"File vượt quá {settings.EXCLUSION_UPLOAD_MAX_MB} MB.")
+        added, updated, deactivated = replace_rules(db, user, parse_rules_upload(data), filename)
+        flash(request, f"Đã cập nhật danh mục từ '{filename}': thêm {added}, cập nhật {updated}, "
+                       f"chuyển ngừng dùng {deactivated} mã.")
+    except (UploadError, WorkflowError) as exc:
+        flash(request, str(exc), "danger")
+    return redirect("/admin/rules")
