@@ -1,4 +1,4 @@
-"""Nghiệp vụ: cập nhật trạng thái lỗi DQ, danh mục quy tắc, luồng yêu cầu loại trừ, nhật ký hệ thống.
+"""Nghiệp vụ: danh mục quy tắc, luồng yêu cầu loại trừ (kèm file bằng chứng), nhật ký hệ thống.
 
 Luồng loại trừ (mỗi yêu cầu = loại trừ 1 bản ghi khỏi 1 quy tắc DQ của 1 chi nhánh), duyệt tuần tự 3 cấp
 (models.APPROVAL_LEVELS):
@@ -16,15 +16,18 @@ nhiều yêu cầu chờ duyệt cho cùng bản ghi được phép.
 import logging
 import re
 from datetime import date, datetime, time, timedelta
+from pathlib import Path
 from typing import NamedTuple
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+import evidence
 from config import settings
-from models import (APPROVAL_LEVELS, LEVEL_BY_STATUS, MANUAL_STATUSES, PENDING_STATUSES, ApprovalLevel, AuditLog,
-                    CurrentUser, DQError, DQRule, ExclusionFilter, ExclusionRequest, ExclusionRequestOut,
-                    ExclusionSource, ExclusionStatus, Status)
+from evidence import EvidenceFile
+from models import (APPROVAL_LEVELS, LEVEL_BY_STATUS, PENDING_STATUSES, ApprovalLevel, AuditLog, CurrentUser, DQRule,
+                    EvidenceOut, ExclusionEvidence, ExclusionFilter, ExclusionRequest, ExclusionRequestOut,
+                    ExclusionSource, ExclusionStatus)
 from repository import keyword_condition, list_branches, list_rules, rule_names
 
 logger = logging.getLogger("dq.workflow")
@@ -63,34 +66,6 @@ class RuleInput(NamedTuple):
 def audit(db: Session, username: str, action: str, target: str | None = None, detail: str | None = None) -> None:
     db.add(AuditLog(at=datetime.now(), username=username, action=action, target=target,
                     detail=detail[:2000] if detail else None))
-
-
-# --------------------------------------------------------------------------- #
-# Cập nhật trạng thái xử lý lỗi DQ (chỉ admin)
-# --------------------------------------------------------------------------- #
-def update_status(db: Session, user: CurrentUser, error_ids: list[int], new_status: Status) -> ActionResult:
-    if not user.can_update_status:
-        raise WorkflowError("Bạn không có quyền cập nhật trạng thái lỗi.")
-    if new_status not in MANUAL_STATUSES:
-        raise WorkflowError("Trạng thái không hợp lệ.")
-    if not error_ids:
-        raise WorkflowError("Chưa chọn dòng lỗi nào.")
-
-    done, skipped = 0, []
-    for row in db.scalars(select(DQError).where(DQError.id.in_(error_ids)).with_for_update()):
-        if not user.can_access(row.branch_code):
-            skipped.append(f"#{row.id}: ngoài phạm vi chi nhánh")
-        elif row.status == new_status.value:
-            skipped.append(f"#{row.id}: đã ở trạng thái '{row.status}'")
-        else:
-            audit(db, user.username, "STATUS_UPDATE", f"DQ#{row.id}", f"{row.status} -> {new_status.value}")
-            row.status = new_status.value
-            done_now = new_status == Status.DONE
-            row.resolved_date = date.today() if done_now else None
-            row.resolved_by = user.username if done_now else None
-            done += 1
-    db.commit()
-    return ActionResult(done, skipped)
 
 
 # --------------------------------------------------------------------------- #
@@ -232,8 +207,10 @@ def first_status(user: CurrentUser) -> ExclusionStatus:
 
 
 def create_exclusions(db: Session, user: CurrentUser, items: list[ExclusionInput], source: ExclusionSource,
-                      upload_file: str | None = None) -> ActionResult:
-    """Tạo yêu cầu loại trừ hàng loạt. Dòng không hợp lệ hoặc trùng yêu cầu đã duyệt còn hiệu lực bị bỏ qua."""
+                      upload_file: str | None = None,
+                      files: dict[str, list[EvidenceFile]] | None = None) -> ActionResult:
+    """Tạo yêu cầu loại trừ hàng loạt. Dòng không hợp lệ hoặc trùng yêu cầu đã duyệt còn hiệu lực bị bỏ qua.
+    files: file bằng chứng ĐÃ KIỂM TRA (evidence.check_files) theo label của dòng; lưu cùng giao dịch với yêu cầu."""
     if not user.can_request:
         raise WorkflowError("Bạn không có quyền gửi yêu cầu loại trừ.")
     if not items:
@@ -248,7 +225,7 @@ def create_exclusions(db: Session, user: CurrentUser, items: list[ExclusionInput
     approved = _approved_keys(db, {i.record_key.strip() for i in items if i.record_key.strip()}, today)
     status = first_status(user).value
 
-    created: list[ExclusionRequest] = []
+    created: list[tuple[str, ExclusionRequest]] = []  # (label, yêu cầu)
     seen: set[tuple[str, str, str]] = set()
     skipped: list[str] = []
     for item in items:
@@ -263,23 +240,46 @@ def create_exclusions(db: Session, user: CurrentUser, items: list[ExclusionInput
             skipped.append(f"{item.label}: đã có yêu cầu đã duyệt còn hiệu lực cho {rule} - {key}")
         else:
             seen.add((branch, rule, key))
-            created.append(ExclusionRequest(
+            created.append((item.label, ExclusionRequest(
                 branch_code=branch, rule_code=rule, record_key=key, reason=reason, valid_to=item.valid_to,
                 source=source.value, upload_file=upload_file, status=status,
                 requested_by=user.username, requested_by_name=user.display_name, requested_at=now,
-            ))
+            )))
     if created:
-        db.add_all(created)
+        db.add_all(req for _, req in created)
         db.flush()
-        ids = [r.id for r in created]
+        n_files = _attach_evidence(db, user, created, files or {}, now)
+        ids = [req.id for _, req in created]
         target = f"LT#{ids[0]}" if len(ids) == 1 else f"LT#{min(ids)}..{max(ids)}"
         detail = f"{len(created)} yêu cầu ({source.value}{': ' + upload_file if upload_file else ''})"
+        if n_files:
+            detail += f"; {n_files} file bằng chứng"
         if skipped:
             detail += f"; bỏ qua {len(skipped)} dòng"
         audit(db, user.username, "EXCL_UPLOAD" if source == ExclusionSource.EXCEL else "EXCL_REQUEST",
               target, detail)
         db.commit()
     return ActionResult(len(created), skipped)
+
+
+def _attach_evidence(db: Session, user: CurrentUser, created: list[tuple[str, ExclusionRequest]],
+                     files: dict[str, list[EvidenceFile]], now: datetime) -> int:
+    """Ghi file bằng chứng ra đĩa + thêm dòng dq_exclusion_evidence. Lỗi ghi đĩa: xóa file đã ghi, hủy cả lô."""
+    written = []
+    try:
+        for label, req in created:
+            for f in files.get(label, []):
+                stored = evidence.new_stored_name(f.content_type)
+                written.append(evidence.save(req.id, stored, f.data))
+                db.add(ExclusionEvidence(request_id=req.id, file_name=f.file_name, stored_name=stored,
+                                         content_type=f.content_type, size_bytes=len(f.data),
+                                         uploaded_by=user.username, uploaded_at=now))
+    except OSError:
+        logger.exception("Không ghi được file bằng chứng vào %s", settings.EVIDENCE_DIR)
+        evidence.remove(written)
+        db.rollback()
+        raise WorkflowError("Không lưu được file bằng chứng (lỗi thư mục lưu trữ). Vui lòng thử lại hoặc báo quản trị.")
+    return len(written)
 
 
 # --------------------------------------------------------------------------- #
@@ -440,10 +440,32 @@ def _exclusion_conditions(user: CurrentUser, tab: str, f: ExclusionFilter) -> li
     return conds
 
 
-def _with_rule_names(db: Session, rows) -> list[ExclusionRequestOut]:
+def _to_out(db: Session, rows) -> list[ExclusionRequestOut]:
+    """Kèm tên quy tắc (danh mục) và danh sách file bằng chứng của từng yêu cầu."""
+    rows = list(rows)
     names = rule_names(db)
-    return [ExclusionRequestOut.model_validate(r).model_copy(update={"rule_name": names.get(r.rule_code)})
-            for r in rows]
+    files: dict[int, list[EvidenceOut]] = {}
+    ids = [r.id for r in rows]
+    for i in range(0, len(ids), _IN_CHUNK):
+        stmt = (select(ExclusionEvidence).where(ExclusionEvidence.request_id.in_(ids[i:i + _IN_CHUNK]))
+                .order_by(ExclusionEvidence.id))
+        for ev in db.scalars(stmt):
+            files.setdefault(ev.request_id, []).append(EvidenceOut.model_validate(ev))
+    return [ExclusionRequestOut.model_validate(r).model_copy(
+        update={"rule_name": names.get(r.rule_code), "evidence": files.get(r.id, [])}) for r in rows]
+
+
+def get_evidence(db: Session, user: CurrentUser, evidence_id: int) -> tuple[ExclusionEvidence, Path]:
+    """File bằng chứng user được xem (cùng phạm vi với danh sách yêu cầu): (bản ghi, đường dẫn trên đĩa)."""
+    ev = db.get(ExclusionEvidence, evidence_id)
+    req = db.get(ExclusionRequest, ev.request_id) if ev else None
+    if not req or not (user.can_access(req.branch_code) or req.requested_by == user.username):
+        raise WorkflowError("Không tìm thấy file bằng chứng.")
+    path = evidence.path_for(ev.request_id, ev.stored_name)
+    if not path.is_file():
+        logger.error("Thiếu file bằng chứng trên đĩa: %s (evidence #%s)", path, ev.id)
+        raise WorkflowError("File bằng chứng không còn trên máy chủ. Vui lòng báo quản trị.")
+    return ev, path
 
 
 def list_exclusions(db: Session, user: CurrentUser, tab: str, f: ExclusionFilter, page: int,
@@ -453,14 +475,14 @@ def list_exclusions(db: Session, user: CurrentUser, tab: str, f: ExclusionFilter
     stmt = (select(ExclusionRequest).where(*conds)
             .order_by(ExclusionRequest.requested_at.desc(), ExclusionRequest.id.desc())
             .offset((page - 1) * page_size).limit(page_size))
-    return _with_rule_names(db, db.scalars(stmt)), total
+    return _to_out(db, db.scalars(stmt)), total
 
 
 def fetch_exclusions(db: Session, user: CurrentUser, f: ExclusionFilter, limit: int) -> list[ExclusionRequestOut]:
     """Dữ liệu cho file xuất (theo phạm vi quyền), sắp theo ngày kết thúc (ngày QTDL duyệt)."""
     stmt = (select(ExclusionRequest).where(*_exclusion_conditions(user, "all", f))
             .order_by(ExclusionRequest.decided_at, ExclusionRequest.id).limit(limit))
-    return _with_rule_names(db, db.scalars(stmt))
+    return _to_out(db, db.scalars(stmt))
 
 
 def count_pending_for(db: Session, user: CurrentUser) -> int:

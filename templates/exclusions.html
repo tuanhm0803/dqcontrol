@@ -193,7 +193,20 @@
                 {% if r.upload_file %}<i class="bi bi-file-earmark-excel"></i> {{ r.upload_file }}{% else %}<i class="bi bi-keyboard"></i> {{ r.source }}{% endif %}
               </div>
             </td>
-            <td class="small text-pre-line" style="min-width: 240px">{{ r.reason }}</td>
+            <td class="small" style="min-width: 240px">
+              <div class="text-pre-line">{{ r.reason }}</div>
+              {% if r.evidence %}
+              <div class="mt-1 d-flex flex-wrap gap-1">
+                {% for ev in r.evidence %}
+                <a class="badge text-bg-light border text-decoration-none text-truncate" style="max-width: 200px"
+                   href="/exclusions/evidence/{{ ev.id }}" target="_blank" rel="noopener"
+                   title="{{ ev.file_name }} ({{ (ev.size_bytes / 1024) | round | int }} KB)">
+                  <i class="bi {{ 'bi-file-earmark-pdf text-danger' if ev.is_pdf else 'bi-file-earmark-image text-primary' }}"></i>
+                  {{ ev.file_name }}</a>
+                {% endfor %}
+              </div>
+              {% endif %}
+            </td>
             <td class="text-nowrap small">
               {% if r.valid_to %}{{ r.valid_to.strftime('%d/%m/%Y') }}
                 {% if expired %}<div><span class="badge text-bg-light border">Hết hiệu lực</span></div>{% endif %}

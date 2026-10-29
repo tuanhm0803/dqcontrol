@@ -8,21 +8,11 @@ from fastapi.templating import Jinja2Templates
 from auth import csrf_token
 from config import BASE_DIR, settings
 from database import SessionLocal, data_source
-from models import PENDING_STATUSES, ROLE_LABELS, CurrentUser, ExclusionStatus, Role, Severity, Status
+from models import PENDING_STATUSES, ROLE_LABELS, CurrentUser, ExclusionStatus, Role
 from workflow import count_pending_for
 
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
-SEVERITY_BADGE = {
-    Severity.HIGH.value: "text-bg-danger",
-    Severity.MEDIUM.value: "text-bg-warning",
-    Severity.LOW.value: "text-bg-info",
-}
-STATUS_BADGE = {
-    Status.PENDING.value: "text-bg-secondary",
-    Status.IN_PROGRESS.value: "text-bg-primary",
-    Status.DONE.value: "text-bg-success",
-}
 EXCLUSION_BADGE = {
     ExclusionStatus.PENDING_MANAGER.value: "text-bg-warning",
     ExclusionStatus.PENDING_BUSINESS.value: "text-bg-info",
@@ -76,13 +66,9 @@ def page_url(path: str, params: dict, page: int) -> str:
 templates.env.globals.update(
     app_name=settings.APP_NAME,
     mock_ldap=settings.MOCK_LDAP,
-    severities=[s.value for s in Severity],
-    statuses=[s.value for s in Status],
     exclusion_statuses=[s.value for s in ExclusionStatus],
     pending_statuses=list(PENDING_STATUSES),
     roles=[(r.value, ROLE_LABELS[r]) for r in Role],
-    severity_badge=lambda v: SEVERITY_BADGE.get(v, "text-bg-light"),
-    status_badge=lambda v: STATUS_BADGE.get(v, "text-bg-light"),
     exclusion_badge=lambda v: EXCLUSION_BADGE.get(v, "text-bg-light"),
     data_source=data_source,
     csrf_token=csrf_token,

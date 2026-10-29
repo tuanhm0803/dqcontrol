@@ -6,7 +6,7 @@
 - **Phê duyệt 3 cấp**: Lãnh đạo phòng ban (chi nhánh) → Phê duyệt nghiệp vụ → Phê duyệt QTDL, và **xuất ngược** các yêu cầu
   đã duyệt ra Excel/CSV để hệ thống DQ xử lý tiếp.
 - **Danh mục mã quy tắc** do Quản trị DQ cập nhật (thêm / sửa / ngừng dùng, upload Excel thay thế toàn bộ).
-- Dashboard lỗi DQ chỉ dành cho Quản trị DQ, Phê duyệt QTDL và Phê duyệt nghiệp vụ; cấp chi nhánh không xem lỗi.
+- **File bằng chứng** (ảnh chụp / PDF) đính kèm từng yêu cầu khi khai báo; người duyệt mở xem ngay trên danh sách.
 
 ## Cấu trúc thư mục
 
@@ -15,32 +15,30 @@
 ├── main.py                 # Khởi chạy FastAPI, middleware (session, gzip, security headers), handler lỗi, routers
 ├── config.py               # Đọc cấu hình từ biến môi trường / .env (AD, DB, session...)
 ├── database.py             # Engine/Session, khởi tạo bảng, nạp dữ liệu giả lập, fallback; CLI init-db / reset-mock
-├── repository.py           # Truy vấn lỗi DQ: tìm kiếm, lọc, thống kê; danh mục chi nhánh (bảng lỗi) / mã quy tắc (dq_rules)
-├── workflow.py             # Nghiệp vụ: cập nhật trạng thái, luồng yêu cầu loại trừ, nhật ký hệ thống
+├── repository.py           # Tìm theo từ khóa; danh mục chi nhánh (bảng lỗi DQ) / mã quy tắc (dq_rules)
+├── workflow.py             # Nghiệp vụ: danh mục quy tắc, luồng yêu cầu loại trừ (kèm file bằng chứng), nhật ký hệ thống
+├── evidence.py             # File bằng chứng: kiểm tra số lượng / dung lượng / loại file, lưu trên đĩa
 ├── auth.py                 # Xác thực AD (ldap3), tính quyền hiệu lực (AD + nội bộ), CSRF
 ├── models.py               # SQLAlchemy models + Pydantic schemas + enum trạng thái / vai trò
-├── mock_data.py            # 480 lỗi DQ + yêu cầu loại trừ giả lập + tài khoản AD giả lập
+├── mock_data.py            # Dữ liệu giả lập (chi nhánh, yêu cầu loại trừ, danh mục quy tắc) + tài khoản AD giả lập
 ├── routers/
 │   ├── __init__.py         # Jinja2Templates, flash message, helper dùng chung
 │   ├── auth_router.py      # GET/POST /login, POST /logout, GET /api/me
-│   ├── dq_router.py        # GET /dashboard, POST /dq/status, GET /api/dq-errors
-│   ├── exclusion_router.py # /exclusions: danh sách, khai báo, upload, duyệt, từ chối, hủy, thu hồi, xuất file
+│   ├── exclusion_router.py # /exclusions: danh sách, khai báo (kèm bằng chứng), upload, duyệt, từ chối, hủy, thu hồi, xuất file
 │   ├── exclusion_files.py  # File mẫu Excel, đọc file upload, dựng file xuất yêu cầu đã duyệt
-│   ├── admin_router.py     # /admin/permissions: phân quyền nội bộ + nhật ký; /admin/rules: danh mục mã quy tắc
-│   └── export_router.py    # GET /export/excel, GET /export/csv
+│   └── admin_router.py     # /admin/permissions: phân quyền nội bộ + nhật ký; /admin/rules: danh mục mã quy tắc
 ├── templates/
 │   ├── base.html           # Layout chung, menu, header User / Role / Chi nhánh, flash message
 │   ├── login.html
-│   ├── dashboard.html      # KPI, bộ lọc, bảng lỗi, thao tác hàng loạt, nút xuất file
 │   ├── exclusions.html     # Danh sách yêu cầu loại trừ, phê duyệt / từ chối hàng loạt, xuất file đã duyệt
-│   ├── exclusion_new.html  # Khai báo loại trừ: nhập tay + upload Excel
+│   ├── exclusion_new.html  # Khai báo loại trừ: nhập tay (kèm file bằng chứng) + upload Excel
 │   ├── admin_permissions.html
 │   ├── admin_rules.html    # Danh mục mã quy tắc: thêm / sửa / ngừng dùng, tải về, upload thay thế
 │   ├── error.html          # Trang 403 / 404
 │   └── _pagination.html
 ├── static/css/app.css
 ├── Dockerfile              # Image production
-├── deploy/                 # docker-compose.yml chạy trên VPS (sau edge-nginx)
+├── deploy/                 # docker-compose.yml chạy trên VPS (sau edge-nginx); windows/: đóng gói + hướng dẫn deploy nội bộ
 ├── .github/workflows/deploy.yml  # CI/CD: build image -> GHCR -> deploy VPS
 ├── requirements.txt
 └── .env.example
@@ -58,7 +56,17 @@ py -3.13 -m uvicorn main:app --host 0.0.0.0 --port 8080
 
 ### Cài offline (máy không có Internet)
 
-Trên máy có mạng, tải sẵn toàn bộ thư viện (Windows 64-bit, Python 3.13) vào thư mục `wheels/`:
+**Cách khuyến nghị – gói cài đặt Windows:** trên máy dev có mạng chạy
+
+```powershell
+py -3.13 deploy\windows\dong_goi.py          # --out <thư mục>, --no-python (không kèm bộ cài Python)
+```
+
+Kết quả `..\dqcontrol_release\dqcontrol_<yyyyMMdd>.zip`: mã nguồn sạch + `wheels\` (kèm `wheels\drivers\`) + bộ cài Python 3.13.5
++ hướng dẫn `HUONG_DAN_DEPLOY_WINDOWS.md` (bản gốc ở `deploy/windows/`). Trên máy công ty **không cần quyền Administrator**:
+cài Python cho user, `pip install` từ `wheels`, tạo `.env`, chạy `uvicorn`.
+
+**Cách thủ công:** tải sẵn toàn bộ thư viện (Windows 64-bit, Python 3.13) vào thư mục `wheels/`:
 
 ```powershell
 py -3.13 -m pip download -r requirements.txt -d wheels --only-binary=:all:
@@ -146,18 +154,17 @@ Muốn làm mới dữ liệu: `py -3.13 database.py reset-mock`.
 
 | Chức năng | Quản trị DQ | Phê duyệt QTDL | Phê duyệt nghiệp vụ | LĐ phòng ban | User chi nhánh |
 |---|:-:|:-:|:-:|:-:|:-:|
-| Xem dashboard lỗi DQ, xuất Excel/CSV lỗi | ✔ | ✔ | ✔ | | |
 | Cập nhật trạng thái xử lý lỗi | ✔ | | | | |
-| Khai báo / upload / hủy yêu cầu loại trừ (mọi chi nhánh) | ✔ | | | | ✔ |
+| Khai báo / upload / hủy yêu cầu loại trừ (mọi chi nhánh), đính kèm bằng chứng | ✔ | | | | ✔ |
 | Duyệt / từ chối cấp 1 – LĐ phòng ban | ✔ | | | ✔ (chi nhánh mình) | |
 | Duyệt / từ chối cấp 2 – Nghiệp vụ | ✔ | | ✔ | | |
 | Duyệt / từ chối cấp 3 – QTDL (cấp cuối) | ✔ | ✔ | | | |
 | Thu hồi yêu cầu loại trừ đã duyệt | ✔ | | | | |
-| Xem và xuất yêu cầu loại trừ đã duyệt | ✔ | ✔ | ✔ | ✔ | ✔ |
+| Xem yêu cầu và file bằng chứng; xuất yêu cầu đã duyệt | ✔ | ✔ | ✔ | ✔ | ✔ |
 | Danh mục mã quy tắc, phân quyền, nhật ký | ✔ | | | | |
 | Phạm vi dữ liệu | Toàn hệ thống | Toàn hệ thống hoặc 1 CN | Toàn hệ thống hoặc 1 CN | 1 chi nhánh | 1 chi nhánh |
 
-Sau khi đăng nhập, Quản trị DQ / Phê duyệt QTDL / Phê duyệt nghiệp vụ vào Dashboard lỗi DQ; cấp chi nhánh vào thẳng trang *Yêu cầu loại trừ*.
+Sau khi đăng nhập mọi người vào trang *Yêu cầu loại trừ* (ứng dụng không còn dashboard lỗi DQ).
 Vai trò *Phê duyệt QTDL* chính là vai trò "Người phê duyệt" của bản trước (cùng mã `approver`, cùng nhóm AD `LDAP_GROUP_APPROVER`).
 
 ### Nguồn quyền
@@ -171,7 +178,7 @@ Vai trò *Phê duyệt QTDL* chính là vai trò "Người phê duyệt" của b
    Mã chi nhánh lấy từ thuộc tính AD `LDAP_BRANCH_ATTRIBUTE`.
 3. Không thuộc nhóm nào và không có phân quyền nội bộ thì bị từ chối.
 
-Phạm vi chi nhánh được áp ở phía server cho mọi truy vấn và thao tác: dashboard, API, export, yêu cầu loại trừ.
+Phạm vi chi nhánh được áp ở phía server cho mọi truy vấn và thao tác: danh sách, file bằng chứng, file xuất, phê duyệt.
 Người dùng sửa URL hay form cũng không thao tác được trên chi nhánh khác.
 Admin không thể tự hạ quyền, tự khóa hay tự xóa phân quyền của chính mình.
 
@@ -192,6 +199,11 @@ Mỗi yêu cầu loại trừ **một bản ghi** (số CIF / số tài khoản 
 - **Nhập trực tiếp:** bảng nhiều dòng, **mỗi dòng một yêu cầu** (chi nhánh, mã quy tắc + tên quy tắc, mã bản ghi, lý do, hiệu lực),
   gửi tất cả cùng lúc (tối đa 200 dòng). Dòng mới có sẵn chi nhánh của bạn và hiệu lực 1 tháng. Có nút thêm dòng, *nhân bản dòng* (giữ quy tắc / lý do / hiệu lực, chỉ cần nhập mã bản ghi mới), xóa dòng,
   và **dán nhiều dòng copy từ Excel** vào bất kỳ ô nào. Dòng hợp lệ được gửi ngay; dòng lỗi được giữ lại trên form, tô đỏ kèm lý do để sửa và gửi lại.
+- **File bằng chứng** (không bắt buộc): nút **Đính kèm** ở mỗi dòng của bảng nhập trực tiếp. Tối đa **3 file / dòng**, mỗi file
+  **≤ 3 MB**, chỉ nhận **ảnh chụp (JPG, PNG, GIF, WEBP) hoặc PDF** — loại file được kiểm tra theo nội dung thật, không theo đuôi tên.
+  File sai bị báo ngay khi chọn và ở server (dòng bị giữ lại). Dòng lỗi được giữ lại phải **chọn lại file** (trình duyệt không cho
+  điền sẵn). Trên danh sách, file hiện dưới cột *Lý do*, bấm để mở (ảnh / PDF xem trực tiếp); ai xem được yêu cầu thì mở được file.
+  Upload Excel không kèm được file. File lưu trên máy chủ ở thư mục `EVIDENCE_DIR` (mặc định `evidence\` cạnh ứng dụng) — nhớ sao lưu.
 - **Upload Excel:** tải *file mẫu* (có sẵn dropdown mã quy tắc / chi nhánh, cột tên quy tắc tự hiện bằng công thức và sheet hướng dẫn),
   điền mỗi dòng một bản ghi rồi upload.
   Chỉ nhận `.xlsx`, tối đa `EXCLUSION_UPLOAD_MAX_ROWS` dòng (2000) và `EXCLUSION_UPLOAD_MAX_MB` MB (5).
@@ -233,7 +245,7 @@ chi nhánh, mã quy tắc, khoảng ngày duyệt hoàn tất (ngày QTDL duyệ
 
 - Sheet dữ liệu có **tiêu đề ở dòng 1** để hệ thống khác đọc thẳng; metadata (phạm vi, bộ lọc, người xuất) nằm ở sheet *Thông tin*.
 - Cột: Mã chi nhánh, Mã quy tắc DQ, Tên quy tắc DQ, Mã bản ghi, Lý do loại trừ, Hiệu lực đến, Mã yêu cầu, Người gửi, Ngày gửi,
-  người duyệt + ngày duyệt của từng cấp (LĐ phòng ban, Nghiệp vụ, QTDL), Ghi chú duyệt. Tiêu đề cột giống file mẫu nên file xuất
+  người duyệt + ngày duyệt của từng cấp (LĐ phòng ban, Nghiệp vụ, QTDL), Ghi chú duyệt, Số file bằng chứng. Tiêu đề cột giống file mẫu nên file xuất
   cũng upload lại được.
 - CSV mã hóa UTF-8 có BOM để Excel mở đúng tiếng Việt; mỗi yêu cầu đúng một dòng (ghi chú nhiều dòng được nối bằng ` | `).
 
@@ -247,33 +259,23 @@ chi nhánh, mã quy tắc, khoảng ngày duyệt hoàn tất (ngày QTDL duyệ
 - Danh mục trống thì người dùng không khai báo được yêu cầu nào. Ở chế độ giả lập danh mục được nạp sẵn 16 mã;
   với CSDL thật, admin cần upload danh mục lần đầu.
 
-## Trạng thái lỗi DQ (dashboard)
+## Bảng lỗi DQ
 
-`Chưa xử lý` ⇄ `Đang xử lý` → `Hoàn thành`. Chỉ **Quản trị DQ** cập nhật được (tick nhiều dòng trên dashboard);
-khi chuyển sang *Hoàn thành* thì ghi *Ngày xử lý* và người xử lý. Yêu cầu loại trừ không làm thay đổi trạng thái lỗi.
+Ứng dụng **không hiển thị / cập nhật lỗi DQ** (dashboard lỗi DQ đã bỏ). Bảng lỗi DQ chỉ được đọc để lấy **danh mục chi nhánh**
+(`branch_code`, `branch_name`). Yêu cầu loại trừ không làm thay đổi bảng này.
 
-**Nhật ký** được ghi vào `dq_audit_log` cho các thao tác: đăng nhập, cập nhật trạng thái, khai báo / upload / duyệt / từ chối / hủy /
-thu hồi / xuất yêu cầu loại trừ, cập nhật / upload danh mục quy tắc, phân quyền, xuất file lỗi.
+**Nhật ký** được ghi vào `dq_audit_log` cho các thao tác: đăng nhập, khai báo (kèm số file bằng chứng) / upload / duyệt / từ chối /
+hủy / thu hồi / xuất yêu cầu loại trừ, cập nhật / upload danh mục quy tắc, phân quyền.
 
 ## Kết nối CSDL thật
 
 1. Bỏ comment driver tương ứng trong `requirements.txt` và chạy lại `py -3.13 -m pip install -r requirements.txt`.
 2. Trong `.env`: `USE_MOCK_DATA=false`, `DATABASE_URL=...`, `DQ_TABLE_NAME`, `DQ_TABLE_SCHEMA`, `APP_TABLE_SCHEMA`.
 3. Nếu bảng thật có tên cột khác, sửa tham số đầu của `mapped_column(...)` trong `models.py`.
-4. **Bảng lỗi DQ cần thêm 2 cột** để lưu ngày và người xử lý. Tài khoản kết nối cần quyền `UPDATE`
-   trên các cột `status`, `resolved_date`, `resolved_by`:
-
-   ```sql
-   -- SQL Server
-   ALTER TABLE dq_errors ADD resolved_date DATE NULL, resolved_by NVARCHAR(100) NULL;
-   -- Oracle
-   ALTER TABLE dq_errors ADD (resolved_date DATE, resolved_by VARCHAR2(100));
-   -- PostgreSQL
-   ALTER TABLE dq_errors ADD COLUMN resolved_date DATE, ADD COLUMN resolved_by VARCHAR(100);
-   ```
-
-   Khi khởi động, ứng dụng kiểm tra các cột này và báo lỗi rõ ràng nếu còn thiếu.
-5. Bốn bảng của ứng dụng (`dq_rules`, `dq_exclusion_requests`, `dq_user_permissions`, `dq_audit_log`) được **tự tạo** khi khởi động.
+4. **Bảng lỗi DQ** chỉ cần đọc được 2 cột `branch_code`, `branch_name` (danh mục chi nhánh); tài khoản chỉ cần quyền `SELECT`.
+   Khi khởi động, ứng dụng kiểm tra 2 cột này và báo lỗi rõ ràng nếu thiếu.
+5. Năm bảng của ứng dụng (`dq_rules`, `dq_exclusion_requests`, `dq_exclusion_evidence`, `dq_user_permissions`, `dq_audit_log`)
+   được **tự tạo** khi khởi động.
    Tài khoản cần quyền `CREATE TABLE`, hoặc DBA tạo trước. Bảng `dq_exception_requests` của phiên bản cũ không còn được dùng
    (ứng dụng không tự xóa; DBA có thể xóa). Nếu bảng của app đã có từ phiên bản cũ mà thiếu cột (vd. các cột duyệt nhiều cấp
    `manager_*`, `business_*`, `dq_*`), ứng dụng báo rõ tên cột khi khởi động; DBA cần `ALTER TABLE` thêm cột.
@@ -282,6 +284,8 @@ thu hồi / xuất yêu cầu loại trừ, cập nhật / upload danh mục quy
    (kể cả danh mục mã quy tắc mẫu).
 7. Nhóm AD mới: `LDAP_GROUP_BUSINESS` (mặc định `DQ_BUSINESS`) và `LDAP_GROUP_MANAGER` (mặc định `DQ_MANAGER`);
    hoặc gán vai trò bằng phân quyền nội bộ.
+8. File bằng chứng lưu trên đĩa máy chủ ứng dụng (`EVIDENCE_DIR`, `EVIDENCE_MAX_FILES`, `EVIDENCE_MAX_MB` trong `.env`), không lưu
+   trong CSDL: sao lưu CSDL phải kèm sao lưu thư mục này.
 
 Nếu không kết nối được CSDL hoặc bảng thiếu cột mà `DB_FALLBACK_TO_MOCK=true`, ứng dụng ghi log lỗi và chuyển sang dữ liệu giả lập
 (footer hiển thị badge "Dữ liệu giả lập"). Ở môi trường thật nên đặt `false` để lỗi hiện rõ ngay khi khởi động.

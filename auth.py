@@ -183,13 +183,6 @@ def require_admin(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
     return user
 
 
-def require_error_viewer(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
-    """Dashboard / API / xuất file lỗi DQ: chỉ Quản trị DQ và Người phê duyệt."""
-    if not user.can_view_errors:
-        raise HTTPException(status_code=403, detail="Chức năng chỉ dành cho Quản trị DQ và Người phê duyệt.")
-    return user
-
-
 def csrf_token(request: Request) -> str:
     token = request.session.get("csrf")
     if not token:

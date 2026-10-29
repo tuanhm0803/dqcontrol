@@ -16,20 +16,19 @@ from models import (ROLE_LABELS, AuditLog, CurrentUser, DQRule, DQRuleOut, Exclu
                     UserPermission, UserPermissionOut)
 from repository import keyword_condition, list_branches
 from routers import flash, redirect, templates
-from routers.exclusion_files import UploadError, build_rules_excel, parse_rules_upload
-from routers.export_router import XLSX_MIME, attachment
+from routers.exclusion_files import XLSX_MIME, UploadError, attachment, build_rules_excel, parse_rules_upload
 from workflow import RuleInput, WorkflowError, audit, replace_rules, save_rule
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 USERNAME_RE = re.compile(r"^[a-z0-9._-]{1,100}$")
-AUDIT_ACTIONS = ["LOGIN", "STATUS_UPDATE", "EXCL_REQUEST", "EXCL_UPLOAD", "EXCL_APPROVE", "EXCL_REJECT",
+AUDIT_ACTIONS = ["LOGIN", "EXCL_REQUEST", "EXCL_UPLOAD", "EXCL_APPROVE", "EXCL_REJECT",
                  "EXCL_CANCEL", "EXCL_REVOKE", "EXCL_EXPORT", "RULE_UPSERT", "RULE_UPLOAD", "PERM_UPSERT",
-                 "PERM_DELETE", "EXPORT"]
+                 "PERM_DELETE"]
 ROLE_SCOPES = {
     Role.ADMIN: "Toàn hệ thống; quản trị phân quyền, danh mục quy tắc; duyệt mọi cấp",
-    Role.APPROVER: "Toàn hệ thống; xem lỗi DQ; duyệt cấp QTDL (cấp cuối)",
-    Role.BUSINESS_APPROVER: "Toàn hệ thống; xem lỗi DQ; duyệt cấp Nghiệp vụ",
+    Role.APPROVER: "Toàn hệ thống; duyệt cấp QTDL (cấp cuối)",
+    Role.BUSINESS_APPROVER: "Toàn hệ thống; duyệt cấp Nghiệp vụ",
     Role.BRANCH_MANAGER: f"Chi nhánh theo thuộc tính AD '{settings.LDAP_BRANCH_ATTRIBUTE}'; duyệt cấp LĐ phòng ban",
     Role.BRANCH_USER: f"Chi nhánh theo thuộc tính AD '{settings.LDAP_BRANCH_ATTRIBUTE}'; khai báo yêu cầu loại trừ",
 }

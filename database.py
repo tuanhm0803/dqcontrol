@@ -28,8 +28,8 @@ SessionLocal = sessionmaker(expire_on_commit=False)
 _state: dict = {"engine": None, "source": None}
 _lock = threading.Lock()
 
-# Cột bắt buộc trên bảng lỗi DQ thật (resolved_* được ứng dụng ghi vào)
-REQUIRED_DQ_COLUMNS = {c.name for c in DQError.__table__.columns}
+# Bảng lỗi DQ thật chỉ dùng làm danh mục chi nhánh -> chỉ cần 2 cột này
+REQUIRED_DQ_COLUMNS = {DQError.__table__.c.branch_code.name, DQError.__table__.c.branch_name.name}
 
 
 def _make_engine(url: str) -> Engine:
@@ -95,7 +95,7 @@ def _check_dq_table(engine: Engine) -> None:
     if missing:
         raise RuntimeError(
             f"Bảng '{settings.DQ_TABLE_NAME}' thiếu cột {missing}. "
-            "Xem mục 'Kết nối CSDL thật' trong README để thêm cột resolved_date / resolved_by."
+            "Xem mục 'Kết nối CSDL thật' trong README."
         )
 
 

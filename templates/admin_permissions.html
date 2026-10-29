@@ -46,14 +46,12 @@
             <tbody>
               {# Thứ tự cột = thứ tự khai báo Role: admin, approver (QTDL), business_approver, branch_manager, branch_user #}
               {% for feature, allowed in [
-                ('Xem dashboard lỗi DQ, xuất Excel/CSV lỗi', [1, 1, 1, 0, 0]),
-                ('Cập nhật trạng thái xử lý lỗi', [1, 0, 0, 0, 0]),
-                ('Khai báo / upload / hủy yêu cầu loại trừ', [1, 0, 0, 0, 1]),
+                ('Khai báo / upload / hủy yêu cầu loại trừ, đính kèm bằng chứng', [1, 0, 0, 0, 1]),
                 ('Duyệt / từ chối cấp 1 - LĐ phòng ban (chi nhánh)', [1, 0, 0, 1, 0]),
                 ('Duyệt / từ chối cấp 2 - Nghiệp vụ', [1, 0, 1, 0, 0]),
                 ('Duyệt / từ chối cấp 3 - QTDL (cấp cuối)', [1, 1, 0, 0, 0]),
                 ('Thu hồi yêu cầu loại trừ đã duyệt', [1, 0, 0, 0, 0]),
-                ('Xem & xuất yêu cầu loại trừ đã duyệt', [1, 1, 1, 1, 1]),
+                ('Xem yêu cầu, file bằng chứng; xuất yêu cầu đã duyệt', [1, 1, 1, 1, 1]),
                 ('Quản trị phân quyền, danh mục quy tắc, nhật ký', [1, 0, 0, 0, 0]),
               ] %}
               <tr><td class="text-start">{{ feature }}</td>

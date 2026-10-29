@@ -18,7 +18,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from auth import NotAuthenticated
 from config import BASE_DIR, settings
 from database import data_source, init_database
-from routers import admin_router, auth_router, dq_router, exclusion_router, export_router, templates
+from routers import admin_router, auth_router, exclusion_router, redirect, templates
 
 logging.basicConfig(level=settings.LOG_LEVEL, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
 logger = logging.getLogger("dq")
@@ -88,10 +88,13 @@ async def http_error_handler(request: Request, exc: StarletteHTTPException):
 # ---------------- Static & routers ----------------
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 app.include_router(auth_router.router)
-app.include_router(dq_router.router)
 app.include_router(exclusion_router.router)
 app.include_router(admin_router.router)
-app.include_router(export_router.router)
+
+
+@app.get("/", include_in_schema=False)
+def index():
+    return redirect("/exclusions")
 
 
 @app.get("/health", include_in_schema=False)

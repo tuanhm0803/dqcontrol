@@ -1,10 +1,11 @@
-"""SQLAlchemy model và Pydantic schema: lỗi DQ, danh mục quy tắc, yêu cầu loại trừ, phân quyền, nhật ký."""
+"""SQLAlchemy model và Pydantic schema: lỗi DQ (nguồn danh mục chi nhánh), danh mục quy tắc, yêu cầu loại trừ,
+file bằng chứng, phân quyền, nhật ký."""
 from dataclasses import dataclass
 from datetime import date, datetime
 from enum import Enum
 from typing import NamedTuple
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, computed_field
 from sqlalchemy import Boolean, Date, DateTime, Identity, Integer, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -14,6 +15,7 @@ from config import settings
 # --------------------------------------------------------------------------- #
 # Enum dùng chung
 # --------------------------------------------------------------------------- #
+# Giá trị cột mức độ / trạng thái của bảng lỗi DQ (chỉ dữ liệu giả lập dùng; app không hiển thị lỗi DQ)
 class Severity(str, Enum):
     HIGH = "High"
     MEDIUM = "Medium"
@@ -24,10 +26,6 @@ class Status(str, Enum):
     PENDING = "Chưa xử lý"
     IN_PROGRESS = "Đang xử lý"
     DONE = "Hoàn thành"
-
-
-# Trạng thái admin cập nhật được trên dashboard
-MANUAL_STATUSES = (Status.PENDING, Status.IN_PROGRESS, Status.DONE)
 
 
 class ExclusionStatus(str, Enum):
@@ -56,7 +54,7 @@ ROLE_LABELS = {
     Role.BRANCH_MANAGER: "Lãnh đạo phòng ban",
     Role.BRANCH_USER: "User Chi nhánh",
 }
-# Vai trò mặc định xem toàn hệ thống (khi lấy quyền theo nhóm AD)
+# Vai trò Hội sở: mặc định xem toàn hệ thống (khi lấy quyền theo nhóm AD)
 HQ_ROLES = (Role.ADMIN, Role.APPROVER, Role.BUSINESS_APPROVER)
 
 
@@ -98,7 +96,8 @@ def _schema(name: str | None) -> dict:
 
 
 class DQError(Base):
-    """Bảng lỗi DQ. Đổi tên cột (tham số đầu của mapped_column) nếu bảng thật đặt tên khác."""
+    """Bảng lỗi DQ của hệ thống bên ngoài. App chỉ đọc branch_code / branch_name làm danh mục chi nhánh
+    (các cột khác dùng cho dữ liệu giả lập). Đổi tên cột (tham số đầu của mapped_column) nếu bảng thật đặt tên khác."""
     __tablename__ = settings.DQ_TABLE_NAME
     __table_args__ = _schema(settings.DQ_TABLE_SCHEMA)
 
@@ -162,6 +161,21 @@ class ExclusionRequest(Base):
     decision_note: Mapped[str | None] = mapped_column(String(4000), nullable=True)  # nhật ký ghi chú các cấp
 
 
+class ExclusionEvidence(Base):
+    """File bằng chứng của một yêu cầu loại trừ. Nội dung lưu trên đĩa: EVIDENCE_DIR/<request_id>/<stored_name>."""
+    __tablename__ = "dq_exclusion_evidence"
+    __table_args__ = _schema(settings.APP_TABLE_SCHEMA)
+
+    id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+    request_id: Mapped[int] = mapped_column(Integer, index=True)
+    file_name: Mapped[str] = mapped_column(String(255))  # tên gốc người dùng tải lên (chỉ để hiển thị)
+    stored_name: Mapped[str] = mapped_column(String(100))  # tên ngẫu nhiên trên đĩa
+    content_type: Mapped[str] = mapped_column(String(50))  # xác định từ nội dung file, không tin trình duyệt
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    uploaded_by: Mapped[str] = mapped_column(String(100))
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime)
+
+
 class UserPermission(Base):
     """Phân quyền nội bộ: ghi đè quyền lấy từ nhóm AD."""
     __tablename__ = "dq_user_permissions"
@@ -191,41 +205,25 @@ class AuditLog(Base):
 
 
 # Bảng do ứng dụng sở hữu (tự tạo khi khởi động nếu chưa có)
-APP_TABLES = [DQRule.__table__, ExclusionRequest.__table__, UserPermission.__table__, AuditLog.__table__]
+APP_TABLES = [DQRule.__table__, ExclusionRequest.__table__, ExclusionEvidence.__table__, UserPermission.__table__,
+              AuditLog.__table__]
 
 
 # --------------------------------------------------------------------------- #
 # Pydantic schema
 # --------------------------------------------------------------------------- #
-class DQErrorOut(BaseModel):
+class EvidenceOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    branch_code: str
-    branch_name: str
-    rule_code: str
-    description: str
-    severity: str
-    detected_date: date
-    status: str
-    owner: str | None = None
-    resolved_date: date | None = None
-    resolved_by: str | None = None
+    request_id: int
+    file_name: str
+    content_type: str
+    size_bytes: int
 
-
-# Thứ tự & tiêu đề cột khi xuất Excel/CSV
-EXPORT_COLUMNS: dict[str, str] = {
-    "branch_code": "Mã chi nhánh",
-    "branch_name": "Tên chi nhánh",
-    "rule_code": "Mã quy tắc DQ",
-    "description": "Tên lỗi / Mô tả",
-    "severity": "Mức độ",
-    "detected_date": "Ngày phát hiện",
-    "status": "Trạng thái",
-    "owner": "Người phụ trách",
-    "resolved_date": "Ngày xử lý",
-    "resolved_by": "Người xử lý",
-}
+    @property
+    def is_pdf(self) -> bool:
+        return self.content_type == "application/pdf"
 
 
 class ExclusionRequestOut(BaseModel):
@@ -257,6 +255,12 @@ class ExclusionRequestOut(BaseModel):
     decided_at: datetime | None = None
     decision_note: str | None = None
     rule_name: str | None = None  # từ danh mục quy tắc (dq_rules), không lưu trong bảng này
+    evidence: list[EvidenceOut] = []  # file bằng chứng (bảng dq_exclusion_evidence)
+
+    @computed_field
+    @property
+    def evidence_count(self) -> int:
+        return len(self.evidence)
 
     def approvals(self) -> list[tuple[ApprovalLevel, str | None, datetime | None]]:
         """(cấp, người duyệt, ngày duyệt) theo thứ tự cấp - dùng để hiển thị tiến trình."""
@@ -282,6 +286,7 @@ EXCLUSION_EXPORT_COLUMNS: dict[str, str] = {
     "dq_by": "QTDL duyệt",
     "dq_at": "Ngày QTDL duyệt",
     "decision_note": "Ghi chú duyệt",
+    "evidence_count": "Số file bằng chứng",
 }
 
 
@@ -325,37 +330,6 @@ class UserPermissionOut(BaseModel):
         return ROLE_LABELS[self.role]
 
 
-class DQFilter(BaseModel):
-    branch_code: str | None = None
-    severity: Severity | None = None
-    status: Status | None = None
-    keyword: str | None = None
-    date_from: date | None = None
-    date_to: date | None = None
-
-    def to_query_params(self) -> dict[str, str]:
-        """Bộ lọc dạng query string (bỏ giá trị rỗng) để giữ khi phân trang / xuất file."""
-        params = {}
-        for key, value in self.model_dump(exclude_none=True).items():
-            params[key] = value.value if isinstance(value, Enum) else str(value)
-        return params
-
-
-class DQStats(BaseModel):
-    total: int = 0
-    by_severity: dict[str, int] = {}
-    by_status: dict[str, int] = {}
-    top_branches: list[tuple[str, str, int]] = []  # (mã CN, tên CN, số lỗi)
-
-
-class PagedResult(BaseModel):
-    items: list[DQErrorOut]
-    total: int
-    page: int
-    page_size: int
-    pages: int
-
-
 class ADIdentity(BaseModel):
     """Thông tin lấy từ AD lúc đăng nhập (lưu trong session)."""
     username: str
@@ -381,15 +355,6 @@ class CurrentUser(BaseModel):
         return self.role == Role.ADMIN
 
     @property
-    def can_view_errors(self) -> bool:
-        """Xem dashboard / API / xuất file lỗi DQ (cấp chi nhánh không xem)."""
-        return self.role in HQ_ROLES
-
-    @property
-    def can_update_status(self) -> bool:
-        return self.role == Role.ADMIN
-
-    @property
     def can_request(self) -> bool:
         """Khai báo / upload yêu cầu loại trừ."""
         return self.role in (Role.ADMIN, Role.BRANCH_USER)
@@ -409,9 +374,3 @@ class CurrentUser(BaseModel):
 
     def can_access(self, branch_code: str | None) -> bool:
         return self.all_branches or (branch_code is not None and branch_code == self.branch_code)
-
-    def scope(self, filters: DQFilter) -> DQFilter:
-        """Xem toàn hệ thống: giữ nguyên bộ lọc. Ngược lại: luôn ép về chi nhánh của user."""
-        if self.all_branches:
-            return filters
-        return filters.model_copy(update={"branch_code": self.branch_code})

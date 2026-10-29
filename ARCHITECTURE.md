@@ -1,7 +1,7 @@
 # ARCHITECTURE.md – DQ Dashboard
 
 > Tài liệu bàn giao cho AI / developer tiếp tục phát triển **mà không cần đọc lại toàn bộ repo**.
-> Mô tả trạng thái code tại thời điểm viết (2026-10-28). Khi sửa kiến trúc, quy ước hoặc luồng nghiệp vụ,
+> Mô tả trạng thái code tại thời điểm viết (2026-10-29). Khi sửa kiến trúc, quy ước hoặc luồng nghiệp vụ,
 > **hãy cập nhật file này cùng commit**. Hướng dẫn cho người dùng cuối nằm ở `README.md`.
 
 ---
@@ -18,8 +18,8 @@ của các chi nhánh ngân hàng:
   (LĐ phòng ban → Nghiệp vụ → QTDL) → **xuất Excel/CSV các yêu cầu đã duyệt** để hệ thống DQ xử lý tiếp.
   Yêu cầu loại trừ **không liên kết** tới dòng trong bảng lỗi DQ.
 - **Danh mục mã quy tắc** (`dq_rules`) do admin quản lý: thêm / sửa / ngừng dùng, upload Excel thay thế toàn bộ.
-- Dashboard lỗi DQ (lọc / thống kê / xuất file) **chỉ cho các vai trò Hội sở** (admin, QTDL, nghiệp vụ); cấp chi nhánh không xem lỗi.
-  Admin cập nhật trạng thái xử lý hàng loạt.
+- **File bằng chứng** (ảnh / PDF, tối đa 3 file × 3 MB mỗi dòng) đính kèm khi khai báo tay; người duyệt mở xem trên danh sách.
+- **Không còn dashboard lỗi DQ** (đã bỏ 2026-10-29): app không hiển thị / cập nhật lỗi DQ; bảng lỗi DQ chỉ còn là nguồn danh mục chi nhánh.
 - Nhật ký hệ thống (audit log).
 
 > Lịch sử: trước 2026-10-28 app có luồng "yêu cầu ngoại lệ" gắn với từng lỗi DQ (bảng `dq_exception_requests`,
@@ -47,10 +47,17 @@ py -3.13 database.py init-db --seed                         # tạo bảng + see
 ```
 
 - Cài offline cho máy không có Internet: thư mục `wheels/` (bị `.gitignore`) chứa wheel cho win_amd64 / cp313, `wheels/drivers/` chứa pyodbc, oracledb, psycopg2-binary. Lệnh tạo và cài: xem README mục *Cài offline*.
-- **Chưa có thư mục test trong repo.** Các lần trước kiểm thử bằng một script end-to-end dùng `fastapi.testclient.TestClient`.
-  Script đó đặt `MOCK_DATABASE_URL` trỏ tới file SQLite tạm, đăng nhập từng vai trò, lấy CSRF token bằng regex
-  `name="csrf_token" value="..."` từ HTML, và đọc flash message từ HTML sau redirect. Nên tái tạo nó thành `tests/` (pytest) khi cần.
-- Khi `uvicorn` đang chạy, Windows **khóa file `.pyd`** trong `site-packages` của Python 3.13, nên `pip install --upgrade` có thể lỗi. Phải dừng tiến trình trước.
+
+### Gói deploy Windows nội bộ (`deploy/windows/`)
+
+- Máy công ty **không có quyền Administrator** → không chạy nền / tự khởi động / mở firewall; chỉ: cài Python 3.13 cho user
+  ("Install Now"), `py -3.13 -m pip install --no-index --find-links wheels -r requirements.txt`, `copy .env.example .env`
+  (+ `SECRET_KEY`), `py -3.13 -m uvicorn main:app --host 0.0.0.0 --port 8080`. Không venv.
+- `dong_goi.py` (chạy trên máy dev có Internet) tạo `../dqcontrol_release/dqcontrol_<yyyyMMdd>/` + `.zip`: copy `*.py` gốc repo,
+  `routers/`, `templates/`, `static/`, `requirements.txt`, `.env.example`, `README.md` (bỏ `__pycache__`), các `.md` của
+  `deploy/windows/` đặt cạnh `main.py`, tải wheels với `--platform win_amd64 --python-version 3.13` (đóng gói được từ máy khác)
+  và bộ cài `python-<ver>-amd64.exe` (cache ở `_cache/`).
+- Hướng dẫn cho người deploy: `deploy/windows/HUONG_DAN_DEPLOY_WINDOWS.md`.
 
 ### Deploy production (VPS)
 
@@ -68,47 +75,47 @@ py -3.13 database.py init-db --seed                         # tạo bảng + see
   Secrets `VPS_HOST`, `VPS_USERNAME`, `VPS_SSH_KEY`, `VPS_PORT` cùng tên với repo edge.
   Bản production hiện là **demo**: workflow cố định `MOCK_LDAP=true`, `USE_MOCK_DATA=true`, `SESSION_HTTPS_ONLY=true`;
   muốn đổi thì thêm dòng vào secret `APP_ENV_EXTRA` (ghi sau nên đè giá trị trước).
-- `.dockerignore` loại `.env`, `*.db`, `wheels/`, `.venv`, nên image không mang dữ liệu hay cấu hình máy dev.
+- `.dockerignore` loại `.env`, `*.db`, `wheels/`, `.venv`, `evidence`, nên image không mang dữ liệu hay cấu hình máy dev.
+  Dockerfile đặt `EVIDENCE_DIR=/data/evidence` (cùng volume `/data` với SQLite) để file bằng chứng không mất khi deploy lại.
 
 ## 3. Cấu trúc module & hướng import
 
 ```
 config.py        Settings đọc env/.env (python-dotenv). Đối tượng toàn cục: settings, BASE_DIR
 models.py        Enum + SQLAlchemy ORM + Pydantic schema + ExclusionFilter + CurrentUser (chứa logic quyền)
+evidence.py      File bằng chứng: check_files (số lượng / dung lượng / loại theo magic bytes), lưu / đường dẫn / xóa trên đĩa
 mock_data.py     Sinh dữ liệu giả lập (seed=42) + MOCK_USERS (tài khoản AD giả)
 database.py      Engine, SessionLocal, init_database(), get_db(), data_source(), seed, CLI
-repository.py    Truy vấn đọc bảng lỗi DQ (search/fetch/stats) + list_branches (bảng lỗi) / list_rules, rule_names (dq_rules) + keyword_condition()
-workflow.py      Nghiệp vụ GHI: update_status, danh mục quy tắc (save_rule/replace_rules), luồng loại trừ
-                 (create/decide/cancel/revoke, decide_blocker), audit(), list/fetch/count yêu cầu
-auth.py          Xác thực AD, group_roles()/resolve_user() (tính quyền), get_current_user, require_admin, require_error_viewer, CSRF
+repository.py    keyword_condition() + list_branches (bảng lỗi DQ) / list_rules, rule_names (dq_rules)
+workflow.py      Nghiệp vụ GHI: danh mục quy tắc (save_rule/replace_rules), luồng loại trừ (create kèm file bằng chứng /
+                 decide/cancel/revoke, decide_blocker), get_evidence, audit(), list/fetch/count yêu cầu
+auth.py          Xác thực AD, group_roles()/resolve_user() (tính quyền), get_current_user, require_admin, CSRF
 routers/__init__.py         templates (Jinja2), globals cho template, flash, flash_result, safe_next, redirect, page_url
 routers/auth_router.py      /login, /logout, /api/me
-routers/dq_router.py        /, /dashboard, /dq/status, /api/dq-errors, get_filters(), scoped_branches()
-routers/export_router.py    /export/excel, /export/csv (lỗi DQ) + style Excel dùng chung, attachment()
-routers/exclusion_files.py  File mẫu, parse_upload(), build_export_excel/csv() cho yêu cầu loại trừ;
-                            build_rules_excel(), parse_rules_upload() cho danh mục quy tắc
-routers/exclusion_router.py /exclusions/*
+routers/exclusion_files.py  Style Excel dùng chung, XLSX_MIME, attachment(); file mẫu, parse_upload(), build_export_excel/csv()
+                            cho yêu cầu loại trừ; build_rules_excel(), parse_rules_upload() cho danh mục quy tắc
+routers/exclusion_router.py /exclusions/* (kể cả /exclusions/evidence/{id}), scoped_branches()
 routers/admin_router.py     /admin/permissions/*, /admin/rules/*
-main.py          App, middleware, exception handler, mount static, include routers, /health
-templates/       base, login, dashboard, exclusions, exclusion_new, admin_permissions, admin_rules, error, _pagination
+main.py          App, middleware, exception handler, mount static, include routers, / (redirect /exclusions), /health
+templates/       base, login, exclusions, exclusion_new, admin_permissions, admin_rules, error, _pagination
 static/css/app.css
+deploy/windows/  Gói deploy Windows nội bộ (dong_goi.py + hướng dẫn), xem §2
 ```
 
 **Hướng import một chiều; không được tạo vòng import:**
 
 ```
-config → models → mock_data → database → repository → workflow → auth → routers/__init__
-       → routers/dq_router, routers/export_router → routers/exclusion_files → routers/exclusion_router → main
+config → models → evidence → mock_data → database → repository → workflow → auth → routers/__init__
+       → routers/exclusion_files → routers/exclusion_router, routers/admin_router → main
 ```
 
 - `workflow.py` và `repository.py` **không được import** `auth` hay `routers`.
   Logic phân quyền cần dùng ở tầng nghiệp vụ được đặt thành method của `CurrentUser` trong `models.py`
-  (`can_access`, `scope`, `can_view_errors`, `can_update_status`, `can_request`, `approval_levels`, `can_approve`, `is_admin`)
+  (`can_access`, `can_request`, `approval_levels`, `can_approve`, `is_admin`)
   chính là để tránh vòng import. Cấu hình luồng duyệt (`APPROVAL_LEVELS`) cũng nằm ở `models.py`.
 - `routers/__init__.py` import `auth.csrf_token` và `workflow.count_pending_for` để đăng ký làm Jinja globals.
-- `export_router` và `exclusion_router` dùng lại `get_filters` / `scoped_branches` từ `dq_router`;
-  `exclusion_files` dùng lại `HEADER_FILL`, `HEADER_FONT`, `BORDER` từ `export_router`;
-  `admin_router` dùng `exclusion_files` (file danh mục) và `auth.group_roles`.
+- `admin_router` dùng `exclusion_files` (file danh mục, `XLSX_MIME`, `attachment`) và `auth.group_roles`.
+- `evidence.py` chỉ phụ thuộc `config`; `workflow` gọi nó để ghi file trong cùng giao dịch tạo yêu cầu.
 
 ## 4. Mô hình dữ liệu (`models.py`)
 
@@ -117,12 +124,12 @@ config → models → mock_data → database → repository → workflow → aut
 ```python
 Severity: "High" | "Medium" | "Low"
 Status (cột dq_errors.status): PENDING="Chưa xử lý", IN_PROGRESS="Đang xử lý", DONE="Hoàn thành"
-MANUAL_STATUSES = (PENDING, IN_PROGRESS, DONE)       # admin cập nhật trên dashboard
+    (Severity / Status chỉ còn dùng để sinh dữ liệu giả lập cho bảng lỗi DQ; app không hiển thị lỗi DQ)
 ExclusionStatus (cột dq_exclusion_requests.status):
     "Chờ LĐ phòng duyệt" | "Chờ duyệt nghiệp vụ" | "Chờ duyệt QTDL" | "Đã duyệt" | "Từ chối" | "Đã hủy" | "Đã thu hồi"
 ExclusionSource (cột source): "Nhập tay" | "Excel"
 Role: "admin" | "approver" (Phê duyệt QTDL) | "business_approver" | "branch_manager" | "branch_user"
-      (ROLE_LABELS: tên hiển thị; HQ_ROLES = admin, approver, business_approver: mặc định toàn hệ thống, xem lỗi DQ)
+      (ROLE_LABELS: tên hiển thị; HQ_ROLES = admin, approver, business_approver: mặc định xem toàn hệ thống)
 APPROVAL_LEVELS: ApprovalLevel(key, label, pending, next, role) theo thứ tự
     ("manager",  "LĐ phòng ban", Chờ LĐ phòng duyệt  -> Chờ duyệt nghiệp vụ, branch_manager)
     ("business", "Nghiệp vụ",    Chờ duyệt nghiệp vụ -> Chờ duyệt QTDL,      business_approver)
@@ -131,21 +138,20 @@ LEVEL_BY_STATUS (trạng thái chờ -> cấp), PENDING_STATUSES (3 trạng thá
 ```
 
 ⚠️ **Template so sánh trực tiếp với chuỗi literal**, ví dụ `r.status != 'Đã duyệt'` trong `exclusions.html`
-(trạng thái chờ dùng global `pending_statuses`),
-hay `stats.by_status.get('Hoàn thành')` trong `dashboard.html`. Khi đổi hoặc thêm giá trị enum phải `grep` cả `templates/`. Xem thêm §11.
-Bảng lỗi DQ thật có thể chứa giá trị trạng thái khác enum (ví dụ dữ liệu cũ "Ngoại lệ đã duyệt"): hiển thị bằng badge mặc định, không lọc được.
+(trạng thái chờ dùng global `pending_statuses`). Khi đổi hoặc thêm giá trị enum phải `grep` cả `templates/`. Xem thêm §11.
 
 ### 4.2 Bảng
 
 | Bảng | Sở hữu | Ghi chú |
 |---|---|---|
-| `dq_errors` (tên lấy từ `DQ_TABLE_NAME`, schema từ `DQ_TABLE_SCHEMA`) | Hệ thống DQ bên ngoài; app **đọc + update** | Cột: `id` PK Identity, `branch_code`, `branch_name`, `rule_code`, `description`, `severity`, `detected_date`, `status`, `owner`, **`resolved_date`**, **`resolved_by`** (2 cột cuối do app ghi). App **không bao giờ INSERT** dòng lỗi, trừ khi seed. Cũng là **nguồn danh mục** chi nhánh / mã quy tắc (`SELECT DISTINCT`) để kiểm tra yêu cầu loại trừ. |
+| `dq_errors` (tên lấy từ `DQ_TABLE_NAME`, schema từ `DQ_TABLE_SCHEMA`) | Hệ thống DQ bên ngoài; app **chỉ đọc** | App chỉ dùng `branch_code`, `branch_name` làm **danh mục chi nhánh** (`SELECT DISTINCT`); DB thật chỉ cần 2 cột này (`REQUIRED_DQ_COLUMNS`). Model còn các cột `id`, `rule_code`, `description`, `severity`, `detected_date`, `status`, `owner`, `resolved_date`, `resolved_by` để sinh dữ liệu giả lập. App không bao giờ ghi bảng này, trừ khi seed. |
 | `dq_rules` | App | PK `rule_code` (chữ hoa, ≤50), `rule_name` (≤500), `is_active`, `updated_by`, `updated_at`. Danh mục mã quy tắc do admin quản lý; mã ngừng dùng không bị xóa. |
 | `dq_exclusion_requests` | App | `branch_code`, `rule_code`, `record_key` (≤100), `reason`, `valid_to` (bắt buộc khi tạo; NULL chỉ ở dữ liệu cũ = không thời hạn), `source`, `upload_file` (tên file Excel), `status` (≤30), `requested_by`/`_name`/`_at`, **người / ngày duyệt từng cấp** `manager_by`/`_by_name`/`_at`, `business_*`, `dq_*` (tiền tố = `ApprovalLevel.key`), `decided_by`/`_name`/`_at` (thao tác **kết thúc**: duyệt cấp cuối / từ chối / hủy / thu hồi), `decision_note` (≤4000, **nhật ký** các dòng `[Duyệt cấp X - user dd/mm/yyyy HH:MM] ghi chú`). Không có FK tới `dq_errors`. Không có unique constraint: chống trùng nằm ở `workflow` (§6.1). |
+| `dq_exclusion_evidence` | App | `request_id` (index, không FK), `file_name` (tên gốc đã làm sạch, chỉ để hiển thị), `stored_name` (32 hex + đuôi chuẩn, tên trên đĩa), `content_type` (xác định từ **nội dung** file), `size_bytes`, `uploaded_by`, `uploaded_at`. Nội dung file nằm ở `EVIDENCE_DIR/<request_id>/<stored_name>`, không trong DB. |
 | `dq_user_permissions` | App | PK `username` (chữ thường, không có domain). `role`, `branch_code` (NULL = dùng chi nhánh từ AD), `all_branches`, `is_active`, `note`, `updated_by`, `updated_at` |
 | `dq_audit_log` | App | `at`, `username`, `action`, `target`, `detail` (cắt ở 2000 ký tự) |
 
-`APP_TABLES` = 4 bảng của app (`dq_rules`, `dq_exclusion_requests`, `dq_user_permissions`, `dq_audit_log`), schema lấy từ `APP_TABLE_SCHEMA`; được `create_all` khi khởi động ở chế độ DB thật.
+`APP_TABLES` = 5 bảng của app (`dq_rules`, `dq_exclusion_requests`, `dq_exclusion_evidence`, `dq_user_permissions`, `dq_audit_log`), schema lấy từ `APP_TABLE_SCHEMA`; được `create_all` khi khởi động ở chế độ DB thật.
 Bảng cũ `dq_exception_requests` không còn trong model; trên DB đã có thì nằm yên (app không xóa).
 Tên cột DB của `DQError` là tham số đầu tiên của `mapped_column(...)`. Muốn map sang bảng thật có tên cột khác thì sửa ở đó,
 còn tên thuộc tính Python giữ nguyên.
@@ -155,26 +161,24 @@ Tên quy tắc **không lưu** trong `dq_exclusion_requests`: `ExclusionRequestO
 (form, file mẫu, kiểm tra khi tạo); `list_rules(db, active_only=False)` cho bộ lọc danh sách.
 Danh mục **chi nhánh** vẫn lấy từ bảng lỗi DQ (`list_branches`, `SELECT DISTINCT`).
 
-Datetime lưu dạng **naive local time** (`datetime.now()`); `resolved_date` lấy theo `date.today()`.
+Datetime lưu dạng **naive local time** (`datetime.now()`).
 
 ### 4.3 Schema Pydantic chính
 
-- `DQErrorOut`: dữ liệu ra của một dòng lỗi (`from_attributes`).
-- `DQFilter`: `branch_code`, `severity`, `status`, `keyword`, `date_from`, `date_to`. Có `to_query_params()` để giữ bộ lọc trên URL.
-- `ExclusionRequestOut`: một yêu cầu loại trừ (`from_attributes`), kèm `rule_name` tra từ danh mục;
-  method `approvals()` trả `(cấp, người duyệt, ngày duyệt)` cho cột *Tiến trình duyệt*.
+- `ExclusionRequestOut`: một yêu cầu loại trừ (`from_attributes`), kèm `rule_name` tra từ danh mục và `evidence: list[EvidenceOut]`;
+  computed field `evidence_count` (có trong `model_dump()`, dùng cho cột file xuất); method `approvals()` trả
+  `(cấp, người duyệt, ngày duyệt)` cho cột *Tiến trình duyệt*.
+- `EvidenceOut`: một file bằng chứng (`id`, `request_id`, `file_name`, `content_type`, `size_bytes`, property `is_pdf`).
 - `DQRuleOut`: một mã quy tắc của danh mục.
 - `ExclusionFilter` (**dataclass**, không phải Pydantic): `branch_code`, `rule_code`, `status`, `keyword`, `decided_from`, `decided_to`,
   `active_only`. Dùng chung cho danh sách và file xuất; đọc từ query bằng `exclusion_router.get_exclusion_filter`.
-- `UserPermissionOut`, `DQStats`, `PagedResult`.
+- `UserPermissionOut`.
 - `ADIdentity`: thông tin AD lưu trong session (`username`, `display_name`, `email`, `branch_code`, `groups` là danh sách CN).
 - **`CurrentUser`**: người dùng hiệu lực, gồm `role`, `branch_code`, `all_branches`, `permission_source` ("AD" | "Nội bộ").
-  - Thuộc tính quyền: `is_admin`; `can_view_errors` (`HQ_ROLES`); `can_update_status` (admin);
-    `can_request` (admin, branch_user); `approval_levels` (admin: cả 3 cấp; vai trò duyệt: đúng cấp của mình);
+  - Thuộc tính quyền: `is_admin`; `can_request` (admin, branch_user); `approval_levels` (admin: cả 3 cấp; vai trò duyệt: đúng cấp của mình);
     `can_approve` = có ít nhất một cấp.
   - `can_access(branch)`: cho phép nếu xem toàn hệ thống, hoặc đúng chi nhánh của user.
-  - `scope(filters)`: trả bộ lọc đã bị ép `branch_code` khi user không xem toàn hệ thống.
-- `EXPORT_COLUMNS`: thứ tự và tiêu đề cột khi export lỗi DQ. `EXCLUSION_EXPORT_COLUMNS`: cột file xuất yêu cầu loại trừ
+- `EXCLUSION_EXPORT_COLUMNS`: cột file xuất yêu cầu loại trừ
   (tiêu đề phải khớp `HEADER_ALIASES` để file xuất upload lại được, xem §9).
 
 ## 5. Xác thực & phân quyền (`auth.py`)
@@ -222,25 +226,23 @@ Nhờ đó khóa hoặc đổi quyền có hiệu lực ngay ở request kế ti
 
 | Chức năng | admin | approver (QTDL) | business_approver | branch_manager | branch_user | Kiểm tra tại |
 |---|:-:|:-:|:-:|:-:|:-:|---|
-| Dashboard / API / export lỗi DQ | ✔ | ✔ | ✔ | | | dependency `require_error_viewer` (403) + `user.scope(filters)` |
-| Cập nhật trạng thái lỗi | ✔ | | | | | `user.can_update_status` trong `workflow.update_status` |
-| Khai báo / upload yêu cầu loại trừ (cho **mọi** chi nhánh) | ✔ | | | | ✔ | `user.can_request` trong `workflow.create_exclusions` |
+| Khai báo / upload yêu cầu loại trừ (cho **mọi** chi nhánh), đính kèm bằng chứng | ✔ | | | | ✔ | `user.can_request` trong `workflow.create_exclusions` |
 | Hủy yêu cầu đang chờ | ✔ | | | | người gửi | `workflow.cancel_exclusion` (người gửi hủy được cả yêu cầu cho chi nhánh khác) |
 | Duyệt / từ chối cấp LĐ phòng ban | ✔ | | | ✔ (CN mình) | | `workflow.decide_blocker` |
 | Duyệt / từ chối cấp Nghiệp vụ | ✔ | | ✔ | | | `workflow.decide_blocker` |
 | Duyệt / từ chối cấp QTDL | ✔ | ✔ | | | | `workflow.decide_blocker` |
 | Thu hồi yêu cầu đã duyệt | ✔ | | | | | `user.is_admin` trong `workflow.revoke_exclusion` |
-| Xem danh sách / xuất yêu cầu đã duyệt | ✔ | ✔ | ✔ | ✔ | ✔ | `_scope_conditions`: không `all_branches` → `branch_code = CN của user` **hoặc** `requested_by = user` |
+| Xem danh sách, mở file bằng chứng, xuất yêu cầu đã duyệt | ✔ | ✔ | ✔ | ✔ | ✔ | `_scope_conditions`: không `all_branches` → `branch_code = CN của user` **hoặc** `requested_by = user`; file bằng chứng: cùng điều kiện trong `workflow.get_evidence` (404 nếu không được xem) |
 | `/admin/*` (phân quyền, nhật ký, danh mục quy tắc) | ✔ | | | | | dependency `require_admin` (403) + `user.is_admin` trong `save_rule` / `replace_rules` |
 
 **Nguyên tắc: quyền LUÔN được kiểm tra ở `workflow.py` / query phía server.** Template chỉ ẩn hoặc hiện nút cho tiện.
 Phạm vi chi nhánh được kiểm tra **từng dòng** bằng `user.can_access(row.branch_code)` cho thao tác ghi,
-và bằng `user.scope(filters)` (lỗi DQ) / `_exclusion_conditions` (yêu cầu loại trừ) cho truy vấn đọc.
-`GET /` chuyển hướng theo quyền: `can_view_errors` → `/dashboard`, còn lại → `/exclusions`.
+và bằng `_exclusion_conditions` cho truy vấn đọc. `GET /` luôn chuyển về `/exclusions`.
 
 ### 5.5 CSRF
 
-- Mọi route POST thay đổi dữ liệu khai báo `dependencies=[Depends(verify_csrf)]`, kể cả upload multipart (`/exclusions/upload`).
+- Mọi route POST thay đổi dữ liệu khai báo `dependencies=[Depends(verify_csrf)]`, kể cả multipart (`/exclusions/new` kèm file,
+  `/exclusions/upload`, `/admin/rules/upload`).
 - Mọi form POST trong template phải có `<input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">`.
 - `verify_csrf` đọc `await request.form()` (Starlette cache lại form nên không xung đột với các tham số `Form(...)`) và so sánh bằng `secrets.compare_digest`.
 - Sai token thì trả 403.
@@ -295,9 +297,17 @@ Bất biến khác:
   đã duyệt còn hiệu lực (`_approved_duplicate`; autoflush nên thấy cả yêu cầu vừa duyệt trong cùng lô) → file xuất không trùng.
 - Yêu cầu loại trừ **không đổi trạng thái** dòng nào trong `dq_errors`.
 
-### 6.2 Trạng thái lỗi DQ
+### 6.2 File bằng chứng
 
-`update_status` (chỉ admin): `Chưa xử lý ⇄ Đang xử lý → Hoàn thành`. DONE ghi `resolved_date/by`, trạng thái khác xóa.
+- Router (`_rows_to_items`) đọc mỗi file tối đa `max_bytes()+1` byte rồi gọi `evidence.check_files`: tối đa `EVIDENCE_MAX_FILES`
+  file / dòng, mỗi file 1..`EVIDENCE_MAX_MB` MB, loại xác định bằng **magic bytes** (JPEG `FF D8 FF`, PNG, GIF87a/89a,
+  RIFF..WEBP, `%PDF-`) — không tin đuôi file / content-type của trình duyệt. Lỗi file = lỗi của dòng (dòng bị giữ lại trên form).
+- `create_exclusions(..., files={label: [EvidenceFile]})` → `_attach_evidence` sau `flush` (đã có id): ghi file
+  `EVIDENCE_DIR/<request_id>/<token_hex(16)><đuôi chuẩn>` + dòng `dq_exclusion_evidence`, trong cùng giao dịch. `OSError` khi ghi
+  → xóa file đã ghi, rollback, `WorkflowError` (cả lô không được tạo). Audit `EXCL_REQUEST` ghi thêm "<n> file bằng chứng".
+- `get_evidence(db, user, id)` kiểm tra quyền xem theo yêu cầu cha; file mất trên đĩa → log lỗi + `WorkflowError`.
+- Chỉ form **nhập trực tiếp** đính kèm được; upload Excel không kèm file. Chưa có chức năng thêm / xóa file sau khi gửi.
+- Hủy / từ chối / thu hồi **không xóa** file (giữ làm hồ sơ).
 
 ### 6.3 Quy ước API của tầng nghiệp vụ
 
@@ -307,8 +317,8 @@ Bất biến khác:
 - Lỗi chặn toàn bộ thao tác (sai quyền, thiếu lý do từ chối, danh sách rỗng) thì raise `WorkflowError(message cho người dùng)`.
 - Mỗi hàm tự `db.commit()`. Bản ghi được nạp bằng `with_for_update()` (SQLite bỏ qua, DB thật thì khóa dòng).
 - Mỗi thay đổi đều gọi `audit(db, username, ACTION, target, detail)`, trong cùng transaction.
-  Các action đang dùng: `LOGIN, STATUS_UPDATE, EXCL_REQUEST, EXCL_UPLOAD, EXCL_APPROVE, EXCL_REJECT, EXCL_CANCEL, EXCL_REVOKE,
-  EXCL_EXPORT, RULE_UPSERT, RULE_UPLOAD, PERM_UPSERT, PERM_DELETE, EXPORT` (`EXCL_APPROVE` / `EXCL_REJECT` ghi rõ cấp trong `detail`).
+  Các action đang dùng: `LOGIN, EXCL_REQUEST, EXCL_UPLOAD, EXCL_APPROVE, EXCL_REJECT, EXCL_CANCEL, EXCL_REVOKE,
+  EXCL_EXPORT, RULE_UPSERT, RULE_UPLOAD, PERM_UPSERT, PERM_DELETE` (`STATUS_UPDATE`, `EXPORT` chỉ còn trong nhật ký cũ) (`EXCL_APPROVE` / `EXCL_REJECT` ghi rõ cấp trong `detail`).
   **Thêm action mới thì nhớ thêm vào `AUDIT_ACTIONS` trong `admin_router.py`** để bộ lọc nhật ký hiển thị được.
   `target` theo dạng `DQ#<id>`, `LT#<id>`, `LT#<min>..<max>`, `XLSX`/`CSV`, hoặc username.
 - `list_exclusions(db, user, tab, f, page, page_size)` với `tab` là `pending` (trạng thái chờ ở các cấp của user),
@@ -325,16 +335,13 @@ Bất biến khác:
 | POST | `/login` | — | Form: `username`, `password`, `next` (mặc định `/`) |
 | POST | `/logout` | CSRF | Xóa session |
 | GET | `/api/me` | login | `CurrentUser` JSON |
-| GET | `/` | login | Redirect `/dashboard` (`HQ_ROLES`) hoặc `/exclusions` (branch_manager, branch_user) |
-| GET | `/dashboard` | `require_error_viewer` | Query: các trường `DQFilter` + `page` |
-| POST | `/dq/status` | CSRF, admin | Form: `ids` (nhiều giá trị), `new_status`, `next` |
-| GET | `/api/dq-errors` | `require_error_viewer` | JSON `PagedResult`; `page_size` ≤ 500 |
-| GET | `/export/excel` · `/export/csv` | `require_error_viewer` | Lỗi DQ, cùng query với dashboard |
+| GET | `/` | — | Redirect `/exclusions` (đã bỏ `/dashboard`, `/dq/status`, `/api/dq-errors`, `/export/*` của lỗi DQ) |
 | GET | `/exclusions` | login | Query: `tab`, `branch_code`, `rule_code`, `status`, `keyword`, `page`. Tab mặc định: có cấp duyệt → `pending`, còn lại → `mine`. Context `blockers` = `{id: decide_blocker(...)}` |
 | GET | `/exclusions/new` | `can_request` | Trang khai báo (nhập tay + upload). Dòng mới mặc định `branch_code` = CN của user (nếu có trong danh mục), `valid_to` = `one_month_later(hôm nay)` |
-| POST | `/exclusions/new` | CSRF, `can_request` | Bảng nhiều dòng: các trường `branch_code`, `rule_code`, `record_key`, `reason`, `valid_to` (ISO) gửi dạng **danh sách song song theo thứ tự dòng** (`list[str] = Form([])`), bỏ dòng chưa có quy tắc / mã bản ghi / lý do (chi nhánh, hiệu lực luôn có mặc định), ≤ `MAX_MANUAL_ROWS` (200). Label lỗi `Dòng <n>`. Không lỗi → redirect `?tab=mine`; có lỗi → **render lại form chỉ với các dòng lỗi** (kèm `error` từng dòng; 200 nếu có dòng đã gửi, 400 nếu không) |
+| POST | `/exclusions/new` | CSRF, `can_request` | **multipart**. Bảng nhiều dòng: các trường `branch_code`, `rule_code`, `record_key`, `reason`, `valid_to` (ISO), `row_uid` gửi dạng **danh sách song song theo thứ tự dòng** (`list[str] = Form([])`); file bằng chứng của dòng ở ô `files_<row_uid>` (dependency async `posted_files` đọc `request.form()`). Bỏ dòng chưa có quy tắc / mã bản ghi / lý do / file (chi nhánh, hiệu lực luôn có mặc định), ≤ `MAX_MANUAL_ROWS` (200). Label lỗi `Dòng <n>`. Không lỗi → redirect `?tab=mine`; có lỗi → **render lại form chỉ với các dòng lỗi** (kèm `error` từng dòng; 200 nếu có dòng đã gửi, 400 nếu không) |
 | GET | `/exclusions/template` | login | File mẫu `.xlsx` (danh mục theo phạm vi user) |
 | POST | `/exclusions/upload` | CSRF, `can_request` | multipart `file` (.xlsx, ≤ `EXCLUSION_UPLOAD_MAX_MB`) |
+| GET | `/exclusions/evidence/{id}` | login + quyền xem yêu cầu | Mở file bằng chứng: `FileResponse`, `content_type` đã kiểm tra, `Content-Disposition: inline; filename*=UTF-8''...`, `Cache-Control: private, no-store`; 404 nếu không được xem |
 | POST | `/exclusions/approve` · `/exclusions/reject` | CSRF, `can_approve` | `ids`, `note`, `next` |
 | POST | `/exclusions/{id}/cancel` | CSRF | `next` |
 | POST | `/exclusions/{id}/revoke` | CSRF, admin | `note`, `next` |
@@ -364,15 +371,14 @@ Các validation đặc biệt của admin (`_validate` trong `admin_router.py`):
   `request` tự có trong context.
 - **Context bắt buộc:** trang cần menu thì phải truyền `user`. `base.html` chỉ render menu, khối thông tin user và nút đăng xuất khi `user` có giá trị.
 - **Jinja globals** (đăng ký trong `routers/__init__.py`):
-  - Dữ liệu và cấu hình: `app_name`, `mock_ldap`, `severities`, `statuses`, `exclusion_statuses`, `pending_statuses`, `roles`, `reason_min_length`.
-  - Class CSS cho badge: `severity_badge(v)`, `status_badge(v)`, `exclusion_badge(v)`.
+  - Dữ liệu và cấu hình: `app_name`, `mock_ldap`, `exclusion_statuses`, `pending_statuses`, `roles`, `reason_min_length`.
+  - Class CSS cho badge: `exclusion_badge(v)`.
   - Hàm tiện ích: `data_source()`, `csrf_token(request)`, `pop_flashes(request)`, `pending_exclusions(user)` (tự mở `SessionLocal` riêng), `page_url(path, params, page)`.
 - **Phân trang:** `{% include "_pagination.html" %}`, cần `page`, `pages` và `params` (dict bộ lọc, không gồm `page`) trong context.
 - **Chọn nhiều dòng** (JS chung ở cuối `base.html`), quy ước theo thuộc tính `data-group="<tên nhóm>"`:
   - `.row-check`: checkbox từng dòng; `.check-all`: ô chọn tất cả.
   - `.needs-selection`: nút tự disable khi chưa chọn dòng nào; `.selection-count`: hiển thị số dòng đã chọn.
-  - Checkbox nằm trong bảng, **ngoài** form, gắn vào form bằng thuộc tính `form="bulkForm"` (dashboard, nhóm `err`, chỉ admin)
-    hoặc `form="decideForm"` (trang loại trừ, nhóm `req`).
+  - Checkbox nằm trong bảng, **ngoài** form, gắn vào form bằng thuộc tính `form="decideForm"` (trang loại trừ, nhóm `req`).
   - Nhiều nút submit dùng chung một form và đổi đích bằng `formaction`.
 - ⚠️ **Modal không được đặt trong phần tử sticky hoặc có z-index** (ví dụ `.bulk-bar`), vì lớp nền mờ sẽ che mất modal.
   Hãy đặt modal ngoài form và gắn các trường vào form bằng `form="..."` (như `#revokeModal` trong `exclusions.html` đặt ngoài mọi form).
@@ -383,29 +389,20 @@ Các validation đặc biệt của admin (`_validate` trong `admin_router.py`):
   JS điền từ `RULE_NAMES` (`rule_names | tojson`, khóa chữ hoa); khi dán, ô trống không ghi đè chi nhánh / hiệu lực mặc định.
   Mã quy tắc / chi nhánh dùng `<input list>` + `<datalist>` thay cho `<select>` để HTML không phình theo số dòng.
   Mọi dòng luôn gửi đủ các trường (kể cả rỗng) để danh sách song song khớp chỉ số.
+  **File bằng chứng:** mỗi dòng có `<input type=hidden name=row_uid>` + `<input type=file class=ev-input name="files_<uid>" multiple>`
+  ẩn, mở bằng nút `.btn-ev`. Dòng server render có uid `r<n>`; dòng JS thêm có uid `n<timestamp><seq>` (template dùng `__UID__`).
+  JS kiểm tra số lượng / dung lượng / MIME khi chọn (`data-ev-bad` chặn submit). Nhân bản dòng **không** copy file.
+  Trình duyệt không cho điền sẵn ô file: dòng lỗi được giữ lại hiện "Chọn lại N file" (`r.files` = số file đã chọn).
   **Không dùng `required`** cho trường nằm trong modal ẩn của form có nhiều nút submit, vì trình duyệt sẽ chặn cả các nút submit khác.
   Server luôn kiểm tra lại.
 - Màu sắc: `--dq-primary #1f4e78` (`.bg-dq`, `.btn-dq`).
-- Menu: *Lỗi DQ* (chỉ `can_view_errors`), *Yêu cầu loại trừ* (badge số chờ duyệt), *Khai báo loại trừ* (chỉ `can_request`), *Danh mục quy tắc* và *Quản trị phân quyền* (chỉ admin).
+- Menu: *Yêu cầu loại trừ* (badge số chờ duyệt), *Khai báo loại trừ* (chỉ `can_request`), *Danh mục quy tắc* và *Quản trị phân quyền* (chỉ admin).
+- Danh sách yêu cầu: link file bằng chứng (badge, icon ảnh / PDF) dưới cột *Lý do*, mở tab mới.
 - Bootstrap và Bootstrap Icons được tải từ **CDN jsdelivr**. Nếu LAN không ra được Internet thì phải tải về `static/` và sửa `base.html`.
 
 ## 9. Export
 
-### 9.1 Lỗi DQ (`routers/export_router.py`)
-
-- Cả hai định dạng dùng `get_filters`, sau đó `user.scope(...)`, rồi `fetch_errors(limit = EXPORT_MAX_ROWS + 1)` để biết có bị cắt bớt hay không.
-  Mỗi lần xuất đều ghi audit `EXPORT`.
-- **Excel**, gồm 2 sheet:
-  - Sheet "Chi tiết lỗi DQ":
-    - Dòng 1 là tiêu đề, dòng 2–5 là metadata (phạm vi, bộ lọc, người xuất, số bản ghi).
-    - **Header ở dòng 7, dữ liệu từ dòng 8.** Có freeze pane, autofilter, tô màu cột mức độ.
-    - Cột ngày (`DATE_COLUMNS`) dùng định dạng `DD/MM/YYYY`; độ rộng cột lấy từ `COLUMN_WIDTHS`.
-  - Sheet "Tổng hợp": crosstab chi nhánh × mức độ bằng pandas, dòng cuối là công thức `SUM`.
-- **CSV:** mã hóa UTF-8 **có BOM** (`utf-8-sig`) để Excel mở đúng tiếng Việt; ngày ở dạng `dd/mm/YYYY`.
-- Tên file: `DQ_Report_<ToanHeThong|BRANCH>_<yyyymmdd_HHMMSS>.<ext>`.
-- Thêm cột export: thêm vào `EXPORT_COLUMNS` (models). Nếu là cột ngày thì thêm vào `DATE_COLUMNS`; chỉnh độ rộng ở `COLUMN_WIDTHS`.
-
-### 9.2 Yêu cầu loại trừ (`routers/exclusion_files.py`)
+### 9.1 Yêu cầu loại trừ (`routers/exclusion_files.py`)
 
 - **File mẫu** (`build_template`): sheet `Yêu cầu loại trừ` (header dòng 1 theo `TEMPLATE_COLUMNS`; `TEMPLATE_FORMAT_ROWS` = 500 dòng đầu
   định dạng Text `@` để Excel không làm mất số 0 / đổi mã dài sang 1E+11; cột *Tên quy tắc DQ (tự hiện)* là công thức `VLOOKUP` sang
@@ -418,7 +415,8 @@ Các validation đặc biệt của admin (`_validate` trong `admin_router.py`):
   Ngày nhận kiểu date của Excel hoặc chuỗi `dd/mm/yyyy`, `yyyy-mm-dd`, `dd-mm-yyyy`, `dd.mm.yyyy`.
   Hàm dùng chung `_read_rows` / `_find_header(rows, aliases, required, anchor)` / `_data_rows` cũng phục vụ file danh mục.
   Lỗi cả file → `UploadError`; lỗi ngày theo dòng → trả về trong danh sách lỗi và gộp với `skipped` của workflow.
-- **File xuất** (`build_export_excel` / `build_export_csv`): cột theo `EXCLUSION_EXPORT_COLUMNS` (gồm người / ngày duyệt từng cấp),
+- **File xuất** (`build_export_excel` / `build_export_csv`): cột theo `EXCLUSION_EXPORT_COLUMNS` (gồm người / ngày duyệt từng cấp
+  và cột cuối *Số file bằng chứng*; không xuất nội dung file),
   **header ở dòng 1** (cho hệ thống khác đọc thẳng), metadata ở sheet `Thông tin`. CSV nối các dòng của `reason` / `decision_note`
   bằng ` | ` để mỗi yêu cầu đúng một dòng. Router ép `status = Đã duyệt`, ghi audit `EXCL_EXPORT`.
   Tên file `Loai_tru_da_duyet_<ToanHeThong|BRANCH>_<yyyymmdd_HHMMSS>.<ext>`. Không có cờ "đã xuất".
@@ -438,7 +436,7 @@ Các validation đặc biệt của admin (`_validate` trong `admin_router.py`):
   - `_init_mock` tự **nạp lại toàn bộ** nếu file mock thuộc phiên bản cũ: bảng `dq_exclusion_requests` thiếu cột (khi đó DROP rồi tạo
     lại bảng này), hoặc có lỗi DQ nhưng chưa có yêu cầu loại trừ. Nhờ vậy `dq_mock.db` cũ trên máy dev / VPS được nâng cấp khi khởi động.
 - **Chế độ DB thật:**
-  - Kết nối `DATABASE_URL`, sau đó `_check_dq_table`: bảng phải tồn tại và có đủ cột của `DQError`, gồm `resolved_date` và `resolved_by`.
+  - Kết nối `DATABASE_URL`, sau đó `_check_dq_table`: bảng lỗi DQ phải tồn tại và có `branch_code`, `branch_name` (`REQUIRED_DQ_COLUMNS`).
   - Tiếp theo `create_all(tables=APP_TABLES)`, rồi `_missing_columns` cho từng bảng app: bảng có sẵn từ phiên bản cũ mà thiếu cột
     → `RuntimeError` nêu tên cột (create_all không ALTER).
   - Danh mục `dq_rules` **không** tự nạp ở DB thật: admin upload lần đầu (hoặc `init-db --seed` nạp danh mục mẫu).
@@ -450,13 +448,6 @@ Các validation đặc biệt của admin (`_validate` trong `admin_router.py`):
 - Driver cho DB thật đang để comment trong `requirements.txt`: `pyodbc`, `oracledb`, `psycopg2-binary`.
 
 ## 11. Công thức thay đổi thường gặp
-
-**Thêm một trạng thái lỗi mới:**
-1. `models.Status` và `MANUAL_STATUSES` nếu admin được đặt tay.
-2. `routers/__init__.py`: `STATUS_BADGE`.
-3. `dashboard.html`: thanh tiến độ (danh sách màu), KPI.
-4. Quy tắc chuyển trạng thái trong `workflow.update_status`.
-5. Có thể cần cập nhật `mock_data` và README.
 
 **Thêm cột cho yêu cầu loại trừ:**
 1. `models.ExclusionRequest`, `ExclusionRequestOut`; nếu cần xuất thì `EXCLUSION_EXPORT_COLUMNS` (thêm **sau** 6 cột đầu) + `EXPORT_WIDTHS`.
@@ -500,6 +491,7 @@ Các validation đặc biệt của admin (`_validate` trong `admin_router.py`):
 | App / session | `APP_NAME`, `DEBUG`, `LOG_LEVEL`, `SECRET_KEY` (không đặt thì sinh ngẫu nhiên, session mất khi restart và hỏng khi chạy `--workers`), `SESSION_MAX_AGE`, `SESSION_HTTPS_ONLY` |
 | AD | `MOCK_LDAP`, `LDAP_SERVER`, `LDAP_USE_SSL`, `LDAP_PORT`, `LDAP_UPN_SUFFIX`, `LDAP_BASE_DN`, `LDAP_TIMEOUT`, `LDAP_BRANCH_ATTRIBUTE`, `LDAP_NESTED_GROUPS`, `LDAP_GROUP_ADMIN`, `LDAP_GROUP_APPROVER` (QTDL), `LDAP_GROUP_BUSINESS` (nghiệp vụ), `LDAP_GROUP_MANAGER` (LĐ phòng ban), `LDAP_GROUP_USER` |
 | DB | `USE_MOCK_DATA` (alias `MOCK_DB`), `MOCK_DATABASE_URL`, `DB_FALLBACK_TO_MOCK`, `DATABASE_URL`, `DQ_TABLE_NAME`, `DQ_TABLE_SCHEMA`, `APP_TABLE_SCHEMA`, `DB_ECHO` |
+| File bằng chứng | `EVIDENCE_DIR` (mặc định `<thư mục app>/evidence`; Docker `/data/evidence`), `EVIDENCE_MAX_FILES` (3), `EVIDENCE_MAX_MB` (3) |
 | Khác | `PAGE_SIZE` (25), `EXPORT_MAX_ROWS` (100000, áp cho cả file xuất loại trừ), `EXCLUSION_REASON_MIN_LENGTH` (10; tên cũ `EXCEPTION_REASON_MIN_LENGTH` vẫn được đọc), `EXCLUSION_UPLOAD_MAX_ROWS` (2000), `EXCLUSION_UPLOAD_MAX_MB` (5) |
 
 Tài khoản giả lập (`MOCK_LDAP=true`):
@@ -531,6 +523,10 @@ hoặc `<mã cn>.manager`, cấp nghiệp vụ do `business`, cấp QTDL do `app
 - Vai trò `approver` (giá trị lưu trong `dq_user_permissions.role`) giữ nguyên từ bản phê duyệt 1 cấp và nay là **Phê duyệt QTDL**;
   đừng đổi giá trị enum này nếu không migrate dữ liệu phân quyền.
 - Bỏ qua cấp LĐ phòng ban chỉ áp dụng khi **người gửi là admin** (`first_status`); không có cấu hình bỏ cấp theo chi nhánh.
+- **File bằng chứng nằm trên đĩa**, không trong DB: sao lưu / chuyển máy phải mang theo `EVIDENCE_DIR`. Chạy nhiều máy chủ thì
+  `EVIDENCE_DIR` phải là thư mục dùng chung.
+- Request khai báo có thể lớn (200 dòng × 3 file × 3 MB): Starlette spool file ra đĩa tạm khi parse multipart; chưa giới hạn tổng
+  dung lượng request (chấp nhận ở quy mô LAN, nên giới hạn ở reverse proxy nếu có).
 - Trên máy dev, PATH hệ thống (Machine) vẫn trỏ Python 3.12, nên lệnh `python` / `uvicorn` có thể chưa phải 3.13. Luôn gọi `py -3.13` (và `py -3.13 -m uvicorn`).
 
 ## 14. Giới hạn hiện tại / hướng mở rộng
@@ -540,4 +536,6 @@ hoặc `<mã cn>.manager`, cấp nghiệp vụ do `business`, cấp QTDL do `app
 - Luồng duyệt cố định 3 cấp tuần tự; phê duyệt nghiệp vụ duyệt mọi quy tắc (chưa phân theo đơn vị phụ trách quy tắc).
 - Tìm kiếm không phân biệt dấu tiếng Việt (ví dụ "ha noi" khớp "Hà Nội") chưa được hỗ trợ.
 - Chưa có kiểm tra bản ghi có thật sự tồn tại trong hệ thống nguồn (chỉ kiểm tra mã quy tắc / chi nhánh).
+- File bằng chứng chỉ đính kèm được lúc khai báo tay; chưa thêm / xóa được sau khi gửi, chưa đính kèm khi upload Excel;
+  tìm theo từ khóa không tìm trong tên file.
 - Nhánh LDAP thật chưa được kiểm thử với Domain Controller.

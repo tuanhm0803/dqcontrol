@@ -7,3 +7,4 @@ Quy tắc bắt buộc:
 - Sau khi thay đổi kiến trúc, luồng nghiệp vụ, route, bảng / cột hoặc quy ước, **cập nhật ARCHITECTURE.md** (và README.md nếu ảnh hưởng người dùng).
 - Không dùng venv; chạy trực tiếp bằng Python 3.13 của máy: `py -3.13 ...`, `py -3.13 -m uvicorn ...` (lệnh `python` trên máy có thể là 3.12).
 - Giao diện, thông báo lỗi, log, comment viết tiếng Việt có dấu; riêng `requirements.txt` chỉ dùng ASCII.
+- luôn chuẩn bị 1 bản để deploy lên máy local chỉ chạy bằng file .py + hướng dẫn deploy local + file wheel + không cần quyền admin + chạy offline

@@ -1,9 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Khai báo loại trừ · {{ app_name }}{% endblock %}
 
-{# Một dòng của bảng khai báo. r: dict trường (có thể có "error"); n: số thứ tự hiển thị.
+{# Một dòng của bảng khai báo. r: dict trường (có thể có "error", "files" = số file đã chọn trước khi gửi lỗi);
+   n: số thứ tự hiển thị; uid: mã dòng nối ô chọn file "files_<uid>" với dòng (JS thay "__UID__" cho dòng thêm mới).
    Cột "Tên quy tắc" là ô chỉ đọc không có name (không gửi lên server), vẫn có data-col để dán từ Excel khớp cột của file mẫu. #}
-{% macro row(r, n) %}
+{% macro row(r, n, uid) %}
 <tr class="excl-row{{ ' table-danger' if r.error }}">
   <td class="text-body-secondary text-center row-no">{{ n }}</td>
   <td><input class="form-control form-control-sm" name="branch_code" list="branchList" maxlength="20"
@@ -20,6 +21,16 @@
   </td>
   <td><input type="date" class="form-control form-control-sm" name="valid_to" min="{{ today.isoformat() }}"
              value="{{ r.valid_to or '' }}" aria-label="Hiệu lực đến" data-col="valid_to" required></td>
+  <td class="evidence-cell" style="min-width: 150px">
+    <input type="hidden" name="row_uid" value="{{ uid }}">
+    <input type="file" class="d-none ev-input" name="files_{{ uid }}" multiple accept="{{ evidence_accept }}"
+           aria-label="File bằng chứng">
+    <button type="button" class="btn btn-sm btn-outline-secondary btn-ev"
+            title="Đính kèm ảnh chụp / PDF: tối đa {{ evidence_max_files }} file, mỗi file ≤ {{ evidence_max_mb }} MB">
+      <i class="bi bi-paperclip"></i> <span class="ev-label">Đính kèm</span></button>
+    <div class="small ev-list text-body-secondary text-break"></div>
+    {% if r.files %}<div class="small text-warning ev-reselect"><i class="bi bi-arrow-repeat"></i> Chọn lại {{ r.files }} file</div>{% endif %}
+  </td>
   <td class="text-nowrap">
     <button type="button" class="btn btn-sm btn-outline-secondary btn-dup" title="Nhân bản dòng (giữ quy tắc, lý do, hiệu lực)">
       <i class="bi bi-copy"></i></button>
@@ -58,13 +69,15 @@
     <!-- Nhập trực tiếp: bảng nhiều dòng -->
     <div class="tab-pane fade show active" id="tabManual" role="tabpanel">
       <div class="card border-0 border-top-0 shadow-sm rounded-top-0">
-        <form method="post" action="/exclusions/new" id="manualForm" novalidate>
+        <form method="post" action="/exclusions/new" id="manualForm" enctype="multipart/form-data" novalidate>
           <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
           <div class="px-3 pt-3 small text-body-secondary">
             <i class="bi bi-info-circle"></i> Cột có <span class="text-danger">*</span> là bắt buộc.
             Dòng mới có sẵn chi nhánh của bạn{{ ' (' ~ defaults.branch_code ~ ')' if defaults.branch_code }} và hiệu lực 1 tháng; sửa lại nếu cần.
             Có thể <strong>dán nhiều dòng copy từ Excel</strong> (theo thứ tự cột của bảng / file mẫu) vào bất kỳ ô nào.
             Dòng chưa có mã quy tắc, mã bản ghi và lý do được bỏ qua.
+            <br><i class="bi bi-paperclip"></i> <strong>Bằng chứng</strong> (không bắt buộc): mỗi dòng tối đa {{ evidence_max_files }} file
+            ảnh chụp (JPG, PNG, GIF, WEBP) hoặc PDF, mỗi file ≤ {{ evidence_max_mb }} MB.
           </div>
           <div class="table-responsive">
             <table class="table table-sm table-dq align-top mb-0" id="exclTable">
@@ -77,11 +90,12 @@
                   <th style="width: 180px">Mã bản ghi <span class="text-danger">*</span></th>
                   <th style="min-width: 240px">Lý do loại trừ <span class="text-danger">*</span></th>
                   <th style="width: 150px">Hiệu lực đến <span class="text-danger">*</span></th>
+                  <th>Bằng chứng</th>
                   <th style="width: 90px"></th>
                 </tr>
               </thead>
               <tbody>
-                {% for r in rows %}{{ row(r, loop.index) }}{% endfor %}
+                {% for r in rows %}{{ row(r, loop.index, 'r' ~ loop.index) }}{% endfor %}
               </tbody>
             </table>
           </div>
@@ -122,21 +136,50 @@
 
 <datalist id="ruleList">{% for code, name in rules %}<option value="{{ code }}">{{ name }}</option>{% endfor %}</datalist>
 <datalist id="branchList">{% for code, name in branches %}<option value="{{ code }}">{{ name }}</option>{% endfor %}</datalist>
-<template id="rowTemplate">{{ row(defaults, '') }}</template>
+<template id="rowTemplate">{{ row(defaults, '', '__UID__') }}</template>
 {% endblock %}
 
 {% block scripts %}
 <script>
 (() => {
   const MAX = {{ max_manual_rows }}, MIN_REASON = {{ reason_min_length }};
+  const EV_MAX_FILES = {{ evidence_max_files }}, EV_MAX_BYTES = {{ evidence_max_mb }} * 1024 * 1024;
+  const EV_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf"];
+  let uidSeq = 0;
+  const newUid = () => `n${Date.now().toString(36)}${uidSeq++}`;
   const tbody = document.querySelector("#exclTable tbody");
   const tpl = document.getElementById("rowTemplate");
   const cols = [...tpl.content.querySelectorAll("[data-col]")].map(e => e.dataset.col);
   const RULE_NAMES = {{ rule_names | tojson }};  // mã quy tắc (chữ hoa) -> tên
   const rows = () => [...tbody.querySelectorAll("tr.excl-row")];
   const val = (tr, col) => tr.querySelector(`[data-col="${col}"]`).value.trim();
-  // Dòng có dữ liệu = đã nhập quy tắc / mã bản ghi / lý do (chi nhánh và hiệu lực có sẵn mặc định)
-  const filled = (tr) => ["rule_code", "record_key", "reason"].some(c => val(tr, c));
+  // Dòng có dữ liệu = đã nhập quy tắc / mã bản ghi / lý do hoặc chọn file (chi nhánh và hiệu lực có sẵn mặc định)
+  const filled = (tr) => ["rule_code", "record_key", "reason"].some(c => val(tr, c))
+    || tr.querySelector(".ev-input").files.length > 0;
+
+  // File bằng chứng: kiểm tra số lượng / dung lượng / loại ngay khi chọn (server kiểm tra lại theo nội dung file)
+  const evProblem = (files) => {
+    if (files.length > EV_MAX_FILES) return `Tối đa ${EV_MAX_FILES} file (đang chọn ${files.length})`;
+    const big = files.find(f => f.size > EV_MAX_BYTES);
+    if (big) return `"${big.name}" vượt quá ${EV_MAX_BYTES / 1024 / 1024} MB`;
+    const bad = files.find(f => !EV_TYPES.includes(f.type));
+    if (bad) return `"${bad.name}" không phải ảnh hoặc PDF`;
+    return "";
+  };
+  const showEvidence = (tr) => {
+    const files = [...tr.querySelector(".ev-input").files];
+    const problem = evProblem(files);
+    const btn = tr.querySelector(".btn-ev"), list = tr.querySelector(".ev-list");
+    tr.querySelector(".ev-label").textContent = files.length ? `${files.length} file` : "Đính kèm";
+    btn.classList.toggle("btn-outline-secondary", !files.length);
+    btn.classList.toggle("btn-outline-success", files.length > 0 && !problem);
+    btn.classList.toggle("btn-outline-danger", !!problem);
+    list.classList.toggle("text-danger", !!problem);
+    list.classList.toggle("text-body-secondary", !problem);
+    list.textContent = problem || files.map(f => f.name).join(", ");
+    tr.dataset.evBad = problem ? "1" : "";
+    tr.querySelector(".ev-reselect")?.remove();
+  };
   const setRuleName = (tr) => {
     tr.querySelector('[data-col="rule_name"]').value = RULE_NAMES[val(tr, "rule_code").toUpperCase()] || "";
   };
@@ -148,6 +191,9 @@
   const addRow = (after, values = {}) => {
     if (rows().length >= MAX) { alert(`Tối đa ${MAX} dòng mỗi lần; số lượng lớn hơn hãy dùng upload Excel.`); return null; }
     const tr = tpl.content.firstElementChild.cloneNode(true);
+    const uid = newUid();
+    tr.querySelector('[name="row_uid"]').value = uid;
+    tr.querySelector(".ev-input").name = `files_${uid}`;
     Object.entries(values).forEach(([k, v]) => { const el = tr.querySelector(`[data-col="${k}"]`); if (el) el.value = v; });
     setRuleName(tr);
     after ? after.after(tr) : tbody.append(tr);
@@ -160,16 +206,21 @@
 
   tbody.addEventListener("click", (e) => {
     const tr = e.target.closest("tr");
-    if (e.target.closest(".btn-del")) {
+    if (e.target.closest(".btn-ev")) {
+      tr.querySelector(".ev-input").click();
+    } else if (e.target.closest(".btn-del")) {
       if (rows().length === 1) addRow(tr);  // luôn còn ít nhất một dòng (dòng mới có giá trị mặc định)
       tr.remove();
       refresh();
     } else if (e.target.closest(".btn-dup")) {
-      // Nhân bản: giữ chi nhánh, quy tắc, lý do, hiệu lực; để trống mã bản ghi
+      // Nhân bản: giữ chi nhánh, quy tắc, lý do, hiệu lực; để trống mã bản ghi và file bằng chứng
       const values = {};
       ["branch_code", "rule_code", "reason", "valid_to"].forEach(c => values[c] = val(tr, c));
       addRow(tr, values)?.querySelector('[data-col="record_key"]').focus();
     }
+  });
+  tbody.addEventListener("change", (e) => {
+    if (e.target.classList.contains("ev-input")) { showEvidence(e.target.closest("tr")); refresh(); }
   });
   tbody.addEventListener("input", (e) => {
     const tr = e.target.closest("tr");
@@ -216,6 +267,8 @@
       });
     });
     if (!any) { e.preventDefault(); alert("Vui lòng nhập ít nhất một dòng."); return; }
+    const badEv = rows().find(tr => tr.dataset.evBad);
+    if (!firstBad && badEv) firstBad = badEv.querySelector(".btn-ev");
     if (firstBad) { e.preventDefault(); firstBad.focus(); }
   });
   refresh();

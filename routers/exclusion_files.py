@@ -9,14 +9,24 @@ from datetime import date, datetime
 
 import pandas as pd
 from openpyxl import Workbook, load_workbook
-from openpyxl.styles import Alignment, Font
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 
 from config import settings
 from models import EXCLUSION_EXPORT_COLUMNS, CurrentUser, DQRuleOut, ExclusionFilter, ExclusionRequestOut
-from routers.export_router import BORDER, HEADER_FILL, HEADER_FONT
 from workflow import ExclusionInput, RuleInput
+
+XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+HEADER_FILL = PatternFill("solid", fgColor="1F4E78")
+HEADER_FONT = Font(bold=True, color="FFFFFF")
+THIN = Side(style="thin", color="BFBFBF")
+BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
+
+
+def attachment(filename: str) -> dict[str, str]:
+    """Header tải file (tên file chỉ dùng ký tự ASCII)."""
+    return {"Content-Disposition": f'attachment; filename="{filename}"'}
 
 DATA_SHEET = "Yêu cầu loại trừ"
 LIST_SHEET = "Danh mục"

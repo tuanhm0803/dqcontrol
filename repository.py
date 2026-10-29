@@ -1,8 +1,8 @@
-"""Truy vấn đọc: bảng lỗi DQ (tìm kiếm, lọc, thống kê) và danh mục chi nhánh / quy tắc."""
-from sqlalchemy import func, or_, select
+"""Truy vấn đọc dùng chung: tìm theo từ khóa, danh mục chi nhánh (bảng lỗi DQ) và mã quy tắc (dq_rules)."""
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from models import DQError, DQErrorOut, DQFilter, DQRule, DQStats
+from models import DQError, DQRule
 
 
 def escape_like(value: str) -> str:
@@ -14,57 +14,8 @@ def keyword_condition(keyword: str, *columns):
     return or_(*(col.ilike(pattern, escape="\\") for col in columns))
 
 
-def _conditions(f: DQFilter) -> list:
-    c = DQError
-    conds = []
-    if f.branch_code:
-        conds.append(c.branch_code == f.branch_code)
-    if f.severity:
-        conds.append(c.severity == f.severity.value)
-    if f.status:
-        conds.append(c.status == f.status.value)
-    if f.date_from:
-        conds.append(c.detected_date >= f.date_from)
-    if f.date_to:
-        conds.append(c.detected_date <= f.date_to)
-    if f.keyword:
-        conds.append(keyword_condition(f.keyword, c.branch_code, c.branch_name, c.rule_code, c.description, c.owner))
-    return conds
-
-
-def _ordered(stmt):
-    return stmt.order_by(DQError.detected_date.desc(), DQError.id.desc())
-
-
-def search_errors(db: Session, f: DQFilter, page: int, page_size: int) -> tuple[list[DQErrorOut], int]:
-    conds = _conditions(f)
-    total = db.scalar(select(func.count()).select_from(DQError).where(*conds)) or 0
-    stmt = _ordered(select(DQError).where(*conds)).offset((page - 1) * page_size).limit(page_size)
-    return [DQErrorOut.model_validate(r) for r in db.scalars(stmt)], total
-
-
-def fetch_errors(db: Session, f: DQFilter, limit: int) -> list[DQErrorOut]:
-    stmt = _ordered(select(DQError).where(*_conditions(f))).limit(limit)
-    return [DQErrorOut.model_validate(r) for r in db.scalars(stmt)]
-
-
-def error_stats(db: Session, f: DQFilter) -> DQStats:
-    conds = _conditions(f)
-    c = DQError
-    by_sev = db.execute(select(c.severity, func.count()).where(*conds).group_by(c.severity)).all()
-    by_status = db.execute(select(c.status, func.count()).where(*conds).group_by(c.status)).all()
-    by_branch = db.execute(
-        select(c.branch_code, c.branch_name, func.count()).where(*conds).group_by(c.branch_code, c.branch_name)
-    ).all()
-    return DQStats(
-        total=sum(n for _, n in by_sev),
-        by_severity=dict(by_sev),
-        by_status=dict(by_status),
-        top_branches=sorted((tuple(r) for r in by_branch), key=lambda b: b[2], reverse=True)[:5],
-    )
-
-
 def list_branches(db: Session) -> list[tuple[str, str]]:
+    """Danh mục (mã, tên) chi nhánh = các chi nhánh xuất hiện trong bảng lỗi DQ."""
     rows = db.execute(select(DQError.branch_code, DQError.branch_name).distinct().order_by(DQError.branch_code))
     return [tuple(r) for r in rows]
 

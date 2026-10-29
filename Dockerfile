@@ -5,8 +5,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    # SQLite dữ liệu giả lập nằm trong volume /data để giữ lại giữa các lần deploy
-    MOCK_DATABASE_URL=sqlite:////data/dq_mock.db
+    # SQLite dữ liệu giả lập và file bằng chứng nằm trong volume /data để giữ lại giữa các lần deploy
+    MOCK_DATABASE_URL=sqlite:////data/dq_mock.db \
+    EVIDENCE_DIR=/data/evidence
 
 WORKDIR /app
 

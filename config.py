@@ -97,6 +97,10 @@ class Settings:
                                                 _int("EXCEPTION_REASON_MIN_LENGTH", 10))
         self.EXCLUSION_UPLOAD_MAX_ROWS = _int("EXCLUSION_UPLOAD_MAX_ROWS", 2000)
         self.EXCLUSION_UPLOAD_MAX_MB = _int("EXCLUSION_UPLOAD_MAX_MB", 5)
+        # File bằng chứng (ảnh / PDF) đính kèm từng yêu cầu loại trừ, lưu trên đĩa
+        self.EVIDENCE_DIR = Path(_env("EVIDENCE_DIR", str(BASE_DIR / "evidence")))
+        self.EVIDENCE_MAX_FILES = _int("EVIDENCE_MAX_FILES", 3)
+        self.EVIDENCE_MAX_MB = _int("EVIDENCE_MAX_MB", 3)
 
 
 settings = Settings()
